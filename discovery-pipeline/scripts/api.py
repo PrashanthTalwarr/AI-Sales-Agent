@@ -695,6 +695,15 @@ async def pipeline_run(test_email: str = "", secret: str = ""):
     threading.Thread(target=_run, daemon=True).start()
 
     async def event_stream():
+        # Stages like contact enrichment and Claude generation can run 30-60s with
+        # nothing to print. A hosting proxy closes a connection idle that long,
+        # which shows up in the browser as "Connection error" while the run
+        # carries on happily server-side. SSE comment lines keep it open and are
+        # ignored by EventSource.
+        import time as _t
+        last_sent = _t.time()
+        HEARTBEAT_EVERY = 15
+
         while True:
             try:
                 line = output_queue.get_nowait()
@@ -702,7 +711,11 @@ async def pipeline_run(test_email: str = "", secret: str = ""):
                     yield f"data: {json.dumps({'type': 'done'})}\n\n"
                     break
                 yield f"data: {json.dumps({'type': 'log', 'text': line})}\n\n"
+                last_sent = _t.time()
             except q_module.Empty:
+                if _t.time() - last_sent >= HEARTBEAT_EVERY:
+                    yield ": keepalive\n\n"
+                    last_sent = _t.time()
                 await asyncio.sleep(0.05)
 
     return StreamingResponse(event_stream(), media_type="text/event-stream",

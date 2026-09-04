@@ -679,8 +679,34 @@ export default function Home() {
 
     es.onerror = () => {
       es.close();
-      setPipelineStatus("error");
-      setPipelineLogs((prev) => [...prev, "Connection error — pipeline may still be running."]);
+      // Losing the stream does not mean the run died — it keeps going server-side.
+      // Poll health and finish properly when it completes, instead of leaving the
+      // user with an error for a run that actually succeeded.
+      setPipelineLogs((prev) => [
+        ...prev,
+        "Log stream dropped — the run is still going. Waiting for it to finish...",
+      ]);
+      (async () => {
+        for (let i = 0; i < 120; i++) {
+          await new Promise((r) => setTimeout(r, 5000));
+          try {
+            const h = await fetch(`${process.env.NEXT_PUBLIC_API_BASE ?? ""}/api/health`, {
+              cache: "no-store",
+            }).then((r) => r.json());
+            if (!h.pipeline_run_in_progress) {
+              setPipelineStatus("done");
+              setPipelineLogs((prev) => [...prev, "Run finished. Results reloaded."]);
+              refreshLeads();
+              refreshTokens();
+              return;
+            }
+          } catch {
+            /* API still waking or briefly unreachable */
+          }
+        }
+        setPipelineStatus("error");
+        setPipelineLogs((prev) => [...prev, "Gave up waiting — check the API logs."]);
+      })();
     };
   }, [refreshLeads, refreshTokens, testEmail]);
 
