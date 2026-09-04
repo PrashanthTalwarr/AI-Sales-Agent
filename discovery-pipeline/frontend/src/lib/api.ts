@@ -136,8 +136,16 @@ export const api = {
       { protocol_name, persona_name, reply_body }
     ),
 
-  /** Returns the EventSource URL for pipeline streaming */
-  pipelineRunUrl: () => `${BASE}/api/pipeline/run`,
+  /**
+   * Returns the EventSource URL for pipeline streaming.
+   * testEmail redirects every outreach email to that address for this run.
+   * If it is empty the backend falls back to RESEND_TEST_EMAIL, and if that is
+   * empty too it sends nothing — real contacts are never emailed.
+   */
+  pipelineRunUrl: (testEmail?: string) =>
+    testEmail
+      ? `${BASE}/api/pipeline/run?test_email=${encodeURIComponent(testEmail)}`
+      : `${BASE}/api/pipeline/run`,
 
   /** Returns the URL for chat streaming */
   chatStreamUrl: () => `${BASE}/api/chat/stream`,

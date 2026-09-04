@@ -22,6 +22,34 @@ function uid() {
   return Math.random().toString(36).slice(2);
 }
 
+// ── Test recipient ────────────────────────────────────────────────────────────
+// Every outreach email is redirected to this single address. Replace it with
+// your own so the emails land in an inbox you can actually check.
+
+const DEFAULT_TEST_EMAIL = "prashanthtalwarr@gmail.com";
+const TEST_EMAIL_KEY = "discovery.testEmail";
+
+function isValidEmail(value: string) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value.trim());
+}
+
+/** localStorage throws in some privacy contexts — never let that break the page. */
+function readStoredTestEmail(): string {
+  try {
+    return localStorage.getItem(TEST_EMAIL_KEY) ?? DEFAULT_TEST_EMAIL;
+  } catch {
+    return DEFAULT_TEST_EMAIL;
+  }
+}
+
+function storeTestEmail(value: string) {
+  try {
+    localStorage.setItem(TEST_EMAIL_KEY, value);
+  } catch {
+    /* ignore — the field still works for this session */
+  }
+}
+
 function TierBadge({ tier }: { tier: string }) {
   const styles: Record<string, string> = {
     hot:  "bg-red-500/20 text-red-400 border border-red-500/30",
@@ -249,10 +277,12 @@ function DraftDrawer({
 function PipelineModal({
   status,
   logs,
+  testEmail,
   onClose,
 }: {
   status: PipelineStatus;
   logs: string[];
+  testEmail: string;
   onClose: () => void;
 }) {
   const logRef = useRef<HTMLDivElement>(null);
@@ -282,6 +312,11 @@ function PipelineModal({
           {status !== "running" && (
             <button onClick={onClose} className="text-gray-500 hover:text-gray-300 text-xl leading-none">×</button>
           )}
+        </div>
+        <div className="px-5 py-2 border-b border-discovery-border bg-purple-500/5 text-xs text-gray-400">
+          Test mode — every outreach email is delivered to{" "}
+          <span className="text-purple-300 font-mono">{testEmail}</span>, never to the real
+          contacts. Swap in your own address in the header to receive them yourself.
         </div>
         <div ref={logRef} className="flex-1 overflow-y-auto p-4 font-mono text-xs text-gray-400 space-y-0.5 bg-black/30">
           {logs.map((line, i) => (
@@ -380,6 +415,10 @@ export default function Home() {
   const [showPipelineModal, setShowPipelineModal] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [tokenUsage, setTokenUsage] = useState<TokenUsage | null>(null);
+  // Server-render with the default, then hydrate from localStorage in an effect
+  // so the markup matches on first paint.
+  const [testEmail, setTestEmail] = useState(DEFAULT_TEST_EMAIL);
+  const [testEmailError, setTestEmailError] = useState<string | null>(null);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -400,6 +439,11 @@ export default function Home() {
     const interval = setInterval(refreshTokens, 5000);
     return () => clearInterval(interval);
   }, [refreshTokens]);
+
+  // Restore the saved test recipient after mount (localStorage is client-only)
+  useEffect(() => {
+    setTestEmail(readStoredTestEmail());
+  }, []);
 
   const refreshLeads = useCallback(async () => {
     try {
@@ -498,11 +542,23 @@ export default function Home() {
   }, [refreshLeads]);
 
   const handleRunPipeline = useCallback(() => {
+    const recipient = testEmail.trim();
+    if (!isValidEmail(recipient)) {
+      setTestEmailError(
+        recipient
+          ? "That does not look like a valid email address."
+          : "Enter a test recipient — without one, nothing will be sent."
+      );
+      return;
+    }
+    setTestEmailError(null);
+    storeTestEmail(recipient);
+
     setPipelineLogs([]);
     setPipelineStatus("running");
     setShowPipelineModal(true);
 
-    const es = new EventSource(api.pipelineRunUrl());
+    const es = new EventSource(api.pipelineRunUrl(recipient));
 
     es.onmessage = (event) => {
       const data = JSON.parse(event.data);
@@ -527,7 +583,7 @@ export default function Home() {
       setPipelineStatus("error");
       setPipelineLogs((prev) => [...prev, "Connection error — pipeline may still be running."]);
     };
-  }, [refreshLeads, refreshTokens]);
+  }, [refreshLeads, refreshTokens, testEmail]);
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === "Enter" && !e.shiftKey) {
@@ -570,6 +626,31 @@ export default function Home() {
           >
             ⚡ {tokenUsage ? tokenUsage.total_tokens.toLocaleString() : "0"} tok · ${tokenUsage ? tokenUsage.estimated_cost_usd.toFixed(4) : "0.0000"}
           </span>
+          <div className="flex flex-col">
+            <div className="flex items-center gap-2">
+              <label htmlFor="test-email" className="text-xs text-gray-500 whitespace-nowrap">
+                Send test emails to:
+              </label>
+              <input
+                id="test-email"
+                type="email"
+                value={testEmail}
+                onChange={(e) => {
+                  setTestEmail(e.target.value);
+                  if (testEmailError) setTestEmailError(null);
+                }}
+                onBlur={(e) => storeTestEmail(e.target.value.trim())}
+                placeholder="you@example.com"
+                title="Every outreach email is redirected here. Replace it with your own address."
+                className={`w-56 px-2 py-1.5 text-xs rounded-lg bg-discovery-bg border text-gray-200 placeholder-gray-600 focus:outline-none focus:border-purple-500 transition-colors ${
+                  testEmailError ? "border-red-500/70" : "border-discovery-border"
+                }`}
+              />
+            </div>
+            <span className={`text-[10px] mt-0.5 ${testEmailError ? "text-red-400" : "text-gray-600"}`}>
+              {testEmailError ?? "All outreach is redirected here — swap in your own address."}
+            </span>
+          </div>
           <button
             onClick={handleRunPipeline}
             disabled={pipelineStatus === "running"}
@@ -672,6 +753,7 @@ export default function Home() {
         <PipelineModal
           status={pipelineStatus}
           logs={pipelineLogs}
+          testEmail={testEmail.trim()}
           onClose={() => {
             setShowPipelineModal(false);
             setPipelineStatus("idle");

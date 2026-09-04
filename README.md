@@ -138,6 +138,54 @@ Once running, the interactive API docs are available at `http://localhost:8000/d
 
 ---
 
+## Sending Emails Safely
+
+Two hard limits sit in front of every send. Neither can be bypassed by a caller —
+both are enforced inside `send_outreach_emails()`.
+
+### 1. Everything goes to one test inbox
+
+Outreach is **never** delivered to the real discovered contacts. Every email is
+redirected to a single test recipient:
+
+- Set it in the UI header field **"Send test emails to:"** (defaults to
+  `prashanthtalwarr@gmail.com` — **replace this with your own address** so the
+  emails land somewhere you can check). The value is remembered in your browser.
+- Or set `RESEND_TEST_EMAIL` in `config/.env` as the fallback.
+- On the CLI: `python scripts/run_pipeline.py --test-email you@example.com`
+
+**If neither is set, nothing is sent at all.** The run completes, drafts are
+generated and saved, and the send step reports `no test recipient set` — it does
+not fall through to real prospects.
+
+Each redirected email keeps the intended recipient visible in two places, so you
+can tell who it was written for:
+
+- the subject, prefixed `[TEST -> ada@protocol.xyz] ...`
+- a banner at the top of the body naming the person, their role, and their protocol
+
+> Note: Resend only delivers to arbitrary addresses once you have verified a
+> sending domain. Until then it restricts sends to your own account email — which
+> is exactly what this test-recipient setup is for.
+
+### 2. A hard cap on emails per run
+
+`MAX_EMAILS` (default **5**) is the ceiling on how many emails one run may
+deliver. Precedence: `--max-emails` flag → `MAX_EMAILS` env var →
+`discovery.max_emails_per_run` in `config/scoring_weights.json` → 5.
+
+- Only real sends count against the budget. Drafts skipped because the person was
+  already emailed, or had no address, do not consume it.
+- Drafts held back by the cap are reported as `skipped` with reason
+  `max_emails cap reached` — never silently dropped — and are **not** written to
+  the send ledger, so they can go out on a later run.
+
+With the current config (`max_qualified_leads: 3`, one contact per protocol) at
+most 3 emails are generated per run, so the 5-email cap is a backstop rather than
+something you will hit day to day. Raise `max_qualified_leads` to make it bite.
+
+---
+
 ## Running the Pipeline
 
 Open `http://localhost:3000` — click **Run Pipeline** in the UI or chat with the agent.

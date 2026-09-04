@@ -380,6 +380,11 @@ def main():
     parser = argparse.ArgumentParser(description="Discovery Pipeline")
     parser.add_argument("--no-llm", action="store_true", help="Skip Claude API, use template fallbacks")
     parser.add_argument("--seed-only", action="store_true", help="Use seed data instead of live API calls")
+    parser.add_argument("--test-email", default="",
+                        help="Send all outreach to this address (overrides RESEND_TEST_EMAIL). "
+                             "If neither is set, nothing is sent.")
+    parser.add_argument("--max-emails", type=int, default=None,
+                        help="Hard cap on emails delivered this run (default: config max_emails_per_run)")
     args = parser.parse_args()
 
     log_file = setup_logging()
@@ -514,7 +519,9 @@ def main():
 
     # ── STEP 6: SEND EMAILS ──────────────────────────────────────────
     logger.info("Step 6: EMAIL SEND")
-    send_results = send_outreach_emails(outreach)
+    send_results = send_outreach_emails(
+        outreach, test_email=args.test_email, max_emails=args.max_emails
+    )
     sys.stdout.flush()
 
     # ── STEP 7: PERSIST TO data/state.json ───────────────────────────

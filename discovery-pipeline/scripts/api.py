@@ -496,9 +496,16 @@ async def pipeline_load():
 
 
 @app.get("/api/pipeline/run")
-async def pipeline_run():
-    """SSE endpoint — streams pipeline stdout line by line."""
-    logger.info("GET /api/pipeline/run — starting pipeline via SSE stream")
+async def pipeline_run(test_email: str = ""):
+    """
+    SSE endpoint — streams pipeline stdout line by line.
+
+    test_email overrides RESEND_TEST_EMAIL for this run. It arrives as a query
+    param because EventSource cannot send a request body. If neither resolves,
+    the send step delivers nothing (see email_sender.send_outreach_emails).
+    """
+    logger.info("GET /api/pipeline/run — starting pipeline via SSE stream (test_email=%s)",
+                test_email or "<falling back to RESEND_TEST_EMAIL>")
     output_queue: q_module.Queue = q_module.Queue()
 
     class _QueueWriter:
@@ -513,7 +520,7 @@ async def pipeline_run():
         old_stdout = sys.stdout
         sys.stdout = _QueueWriter()
         try:
-            _do_pipeline_run()
+            _do_pipeline_run(test_email=test_email)
             logger.info("GET /api/pipeline/run — pipeline completed successfully")
         except Exception as e:
             logger.exception("GET /api/pipeline/run — pipeline raised an exception")
@@ -597,8 +604,13 @@ async def reset_token_usage():
 
 # ── Pipeline run (used by SSE endpoint) ──────────────────────────────────────
 
-def _do_pipeline_run():
-    """Run the full live pipeline and update _state."""
+def _do_pipeline_run(test_email: str = ""):
+    """
+    Run the full live pipeline and update _state.
+
+    test_email is the per-run test inbox from the UI; when empty the send step
+    falls back to RESEND_TEST_EMAIL, and if that is empty too it sends nothing.
+    """
     logger.info("_do_pipeline_run: starting full live pipeline")
     script_dir = os.path.dirname(os.path.abspath(__file__))
     spec = importlib.util.spec_from_file_location(
@@ -677,7 +689,7 @@ def _do_pipeline_run():
     )
 
     # Send emails
-    send_results = send_outreach_emails(outreach)
+    send_results = send_outreach_emails(outreach, test_email=test_email)
 
     # Persist everything to data/state.json
     save_leads(scored, enrichment_map)

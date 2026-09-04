@@ -9,6 +9,7 @@
     "max_protocols_per_run": 50,
     "max_qualified_leads": 3,
     "max_contacts_per_protocol": 3,
+    "max_emails_per_run": 5,
     "github_orgs_per_protocol": 3,
     "target_categories": ["Dexes", "Lending", "Yield", "Bridge", "Liquid Staking", "RWA", "CDP", "Derivatives", "Restaking", "Chain"],
     "exclude_categories": ["NFT Marketplace", "Gaming", "Launchpad", "Options Vault"]

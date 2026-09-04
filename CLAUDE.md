@@ -42,8 +42,10 @@ discovery-pipeline/
    `web_search` for leadership; merged, deduped by name, sorted by role priority.
 6. **Outreach** (`agents/outreach_agent.py`) — one Claude call per contact
    (callers currently slice `contacts[:1]`, so one email per protocol).
-7. **Send** (`email_sender.py`) — Resend, guarded by the on-disk send ledger
-   (`data/sent_ledger.json`), which is written immediately after each successful send.
+7. **Send** (`email_sender.py`) — Resend, behind three fail-closed gates: a test
+   recipient must resolve (else nothing is sent, never to real contacts), a hard
+   `MAX_EMAILS` cap (default 5), and the on-disk send ledger
+   (`data/sent_ledger.json`), written immediately after each successful send.
 8. **Persist** — `data/state.json` via `store/json_store.py` (atomic writes).
 
 Two entry points run this: `run_pipeline.main()` (CLI) and `_do_pipeline_run()` in
