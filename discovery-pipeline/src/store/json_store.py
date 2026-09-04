@@ -29,7 +29,7 @@ DATA_DIR = os.path.join(_ROOT, "data")
 STATE_PATH = os.path.join(DATA_DIR, "state.json")
 LEDGER_PATH = os.path.join(DATA_DIR, "sent_ledger.json")
 
-_EMPTY_STATE = {"leads": [], "contacts": {}, "outreach": [], "last_run": None}
+_EMPTY_STATE = {"leads": [], "contacts": {}, "outreach": [], "drafts": [], "last_run": None}
 
 
 # ── Low-level IO ──────────────────────────────────────────────────────────────
@@ -184,6 +184,38 @@ def save_outreach(send_results: dict) -> int:
     logger.info("state.json outreach: %d saved, %d already existed", saved, skipped)
     print(f"  OK state.json: {saved} outreach records saved", flush=True)
     return saved
+
+
+_DRAFT_FIELDS = (
+    "protocol_name", "persona_name", "persona_role", "channel", "sequence_step",
+    "subject_line", "message_body", "signals_used", "llm_model",
+    "contact_email", "contact_twitter", "contact_github", "contact_source",
+)
+
+
+def save_drafts(drafts: list) -> int:
+    """
+    Persist generated outreach drafts, replacing any previous set for the same
+    protocol. Drafts used to live only in the API's memory, so a server reload
+    lost them and the UI's Send button had nothing to send.
+    """
+    state = load_state()
+    touched = {d.protocol_name for d in (drafts or [])}
+    kept = [d for d in state["drafts"] if d.get("protocol_name") not in touched]
+
+    for d in drafts or []:
+        kept.append({f: getattr(d, f, None) for f in _DRAFT_FIELDS})
+
+    state["drafts"] = kept
+    _save_state(state)
+    logger.info("state.json: %d drafts saved", len(drafts or []))
+    print(f"  OK state.json: {len(drafts or [])} drafts saved", flush=True)
+    return len(drafts or [])
+
+
+def load_drafts() -> list:
+    """Return persisted drafts as plain dicts, in save order."""
+    return load_state()["drafts"]
 
 
 def load_leads_and_contacts() -> dict:

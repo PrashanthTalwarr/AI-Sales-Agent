@@ -47,6 +47,7 @@ from src.agents.outreach_agent import OutreachDraft
 from src.monitoring.event_monitor import run_event_monitor
 from src.store.json_store import (
     load_leads_and_contacts,
+    load_drafts,
     list_outreach,
     mark_replied as store_mark_replied,
 )
@@ -116,6 +117,31 @@ class AgentState:
 
 _state = AgentState()
 _chat_history: list = []
+
+
+def _rehydrate_drafts() -> list:
+    """
+    Rebuild OutreachDraft objects from data/state.json.
+
+    Drafts previously lived only in this process's memory, so any uvicorn reload
+    left the draft drawer and its Send button with nothing to work with. Reading
+    them back from disk makes both survive a restart.
+    """
+    drafts = [
+        OutreachDraft(
+            protocol_name=d.get("protocol_name", ""), persona_name=d.get("persona_name", ""),
+            persona_role=d.get("persona_role", ""), channel=d.get("channel", "email"),
+            sequence_step=d.get("sequence_step", 1) or 1,
+            subject_line=d.get("subject_line", ""), message_body=d.get("message_body", ""),
+            signals_used=d.get("signals_used") or {}, llm_model=d.get("llm_model", ""),
+            contact_email=d.get("contact_email") or "", contact_twitter=d.get("contact_twitter") or "",
+            contact_github=d.get("contact_github") or "", contact_source=d.get("contact_source") or "",
+        )
+        for d in load_drafts()
+    ]
+    if drafts:
+        logger.info("Rehydrated %d drafts from data/state.json", len(drafts))
+    return drafts
 
 
 # ── LangChain tools ───────────────────────────────────────────────────────────
@@ -437,10 +463,12 @@ async def get_all_drafts(protocol: str):
     """Returns ALL per-person drafts for a protocol."""
     logger.info("GET /api/leads/%s/drafts", protocol)
     name_l = protocol.lower()
-    drafts = [d for d in _state.outreach_drafts if d.protocol_name.lower() == name_l]
+    # Fall back to disk so drafts survive a server reload
+    pool = _state.outreach_drafts or _rehydrate_drafts()
+    drafts = [d for d in pool if d.protocol_name.lower() == name_l]
     if not drafts:
         # fuzzy match
-        drafts = [d for d in _state.outreach_drafts if name_l in d.protocol_name.lower()]
+        drafts = [d for d in pool if name_l in d.protocol_name.lower()]
     if not drafts:
         raise HTTPException(status_code=404, detail=f"No drafts for '{protocol}'")
     logger.info("GET /api/leads/%s/drafts — returning %d drafts", protocol, len(drafts))
@@ -480,6 +508,9 @@ async def pipeline_load():
             "ai_tool_signals":  [s for s in lead["ai_signals"].split(", ") if s] if lead["ai_signals"] else [],
             "contacts":         db_data["contacts"].get(lead["protocol_name"], []),
         }
+
+    # Restore drafts too, so the drawer and its Send button survive a restart
+    _state.outreach_drafts = _rehydrate_drafts()
 
     _state.last_run = db_data["last_run"]
     hot  = len([l for l in _state.scored_leads if l.score_tier == "hot"])
@@ -568,17 +599,17 @@ async def send_one_draft(req: SendDraftRequest):
                 req.protocol_name, req.persona_name or "<first>", req.test_email or "<env>")
 
     name_l = req.protocol_name.lower()
-    candidates = [d for d in _state.outreach_drafts if d.protocol_name.lower() == name_l]
+    pool = _state.outreach_drafts or _rehydrate_drafts()
+    candidates = [d for d in pool if d.protocol_name.lower() == name_l]
     if not candidates:
-        candidates = [d for d in _state.outreach_drafts if name_l in d.protocol_name.lower()]
+        candidates = [d for d in pool if name_l in d.protocol_name.lower()]
     if req.persona_name:
         exact = [d for d in candidates if d.persona_name == req.persona_name]
         candidates = exact or candidates
     if not candidates:
         raise HTTPException(
             status_code=404,
-            detail=f"No draft in memory for '{req.protocol_name}'. Run the pipeline first — "
-                   f"'Load Last Results' restores leads and contacts but not drafts.",
+            detail=f"No draft found for '{req.protocol_name}'. Run the pipeline to generate one.",
         )
 
     draft = candidates[0]
@@ -697,7 +728,7 @@ def _do_pipeline_run(test_email: str = ""):
     from src.agents.outreach_agent import run_outreach_generation
     from src.integrations.contacts import find_contacts_for_qualified_leads
     from src.integrations.email_sender import send_outreach_emails
-    from src.store.json_store import save_leads, save_contacts, save_outreach
+    from src.store.json_store import save_leads, save_contacts, save_outreach, save_drafts
     from src.utils.config import load_config
 
     _cfg = load_config()
@@ -766,6 +797,7 @@ def _do_pipeline_run(test_email: str = ""):
     save_leads(scored, enrichment_map)
     save_contacts(contacts_map)
     save_outreach(send_results)
+    save_drafts(outreach)
 
     _state.scored_leads    = scored
     _state.outreach_drafts = outreach

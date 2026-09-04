@@ -49,7 +49,7 @@ from src.agents.outreach_agent import run_outreach_generation
 from src.integrations.contacts import find_contacts_for_qualified_leads
 from src.integrations.email_sender import send_outreach_emails
 from src.monitoring.event_monitor import run_event_monitor
-from src.store.json_store import save_leads, save_contacts, save_outreach
+from src.store.json_store import save_leads, save_contacts, save_outreach, save_drafts
 from src.utils.config import load_config
 
 logger = logging.getLogger(__name__)
@@ -529,6 +529,7 @@ def main():
     save_leads(scored, enrichment_map)
     save_contacts(contacts_map)
     save_outreach(send_results)
+    save_drafts(outreach)
     sys.stdout.flush()
 
     # ── STEP 8: MARKET EVENT MONITOR ─────────────────────────────────
