@@ -130,6 +130,17 @@ export const api = {
   getSentOutreach: () =>
     get<{ results: SentOutreach[] }>("/api/outreach/sent"),
 
+  /** Send one drafted email on demand, to the test recipient. */
+  sendDraft: (protocol_name: string, persona_name: string, test_email: string) =>
+    post<{
+      sent: boolean;
+      to: string;
+      real_recipient: string;
+      protocol: string;
+      persona: string;
+      id: string;
+    }>("/api/outreach/send", { protocol_name, persona_name, test_email }),
+
   markReplied: (protocol_name: string, persona_name: string, reply_body: string) =>
     post<{ updated: boolean; protocol: string; persona: string }>(
       "/api/outreach/replied",

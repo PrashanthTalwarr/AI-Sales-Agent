@@ -130,12 +130,16 @@ function SourceBadge({ source }: { source: string }) {
   return null;
 }
 
+type SendState = { status: "idle" | "sending" | "sent" | "error"; message: string };
+
 function DraftDrawer({
   protocol,
+  testEmail,
   onClose,
   onAskAgent,
 }: {
   protocol: string;
+  testEmail: string;
   onClose: () => void;
   onAskAgent: (msg: string) => void;
 }) {
@@ -143,6 +147,7 @@ function DraftDrawer({
   const [selectedIdx, setSelectedIdx] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [send, setSend] = useState<SendState>({ status: "idle", message: "" });
 
   useEffect(() => {
     setLoading(true);
@@ -154,7 +159,26 @@ function DraftDrawer({
       .finally(() => setLoading(false));
   }, [protocol]);
 
+  // Switching person clears any previous send result
+  useEffect(() => setSend({ status: "idle", message: "" }), [selectedIdx, protocol]);
+
   const draft = drafts[selectedIdx] ?? null;
+
+  const handleSend = async () => {
+    if (!draft) return;
+    const to = testEmail.trim();
+    if (!isValidEmail(to)) {
+      setSend({ status: "error", message: "Set a valid address in \"Send test emails to:\" first." });
+      return;
+    }
+    setSend({ status: "sending", message: "" });
+    try {
+      const res = await api.sendDraft(draft.protocol, draft.persona, to);
+      setSend({ status: "sent", message: `Delivered to ${res.to} · id ${res.id.slice(0, 8)}` });
+    } catch (e) {
+      setSend({ status: "error", message: e instanceof Error ? e.message : "Send failed." });
+    }
+  };
 
   return (
     <div className="fixed inset-0 z-50 flex">
@@ -267,6 +291,42 @@ function DraftDrawer({
           )}
         </div>
 
+        {/* Send bar */}
+        {draft && (
+          <div className="border-t border-discovery-border px-5 py-3 shrink-0 bg-discovery-surface">
+            <div className="flex items-center justify-between gap-3">
+              <div className="text-xs text-gray-500 min-w-0">
+                {send.status === "sent" ? (
+                  <span className="text-green-400">✓ {send.message}</span>
+                ) : send.status === "error" ? (
+                  <span className="text-red-400 break-words">{send.message}</span>
+                ) : (
+                  <>
+                    Test send goes to{" "}
+                    <span className="text-purple-300 font-mono">{testEmail.trim() || "— not set —"}</span>
+                    {draft.contact_email && (
+                      <>
+                        , not to{" "}
+                        <span className="font-mono text-gray-400">{draft.contact_email}</span>
+                      </>
+                    )}
+                  </>
+                )}
+              </div>
+              <button
+                onClick={handleSend}
+                disabled={send.status === "sending"}
+                className="shrink-0 px-4 py-2 text-xs rounded-lg bg-purple-600 hover:bg-purple-500 text-white font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {send.status === "sending"
+                  ? "Sending..."
+                  : send.status === "sent"
+                  ? "Send again"
+                  : "Send test email"}
+              </button>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -740,6 +800,7 @@ export default function Home() {
       {selectedProtocol && (
         <DraftDrawer
           protocol={selectedProtocol}
+          testEmail={testEmail}
           onClose={() => setSelectedProtocol(null)}
           onAskAgent={(msg) => {
             setSelectedProtocol(null);

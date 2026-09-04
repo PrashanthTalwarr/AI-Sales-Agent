@@ -98,7 +98,8 @@ def _test_mode_body(draft, real_email: str) -> str:
     )
 
 
-def send_outreach_emails(drafts: list, test_email: str = None, max_emails: int = None) -> dict:
+def send_outreach_emails(drafts: list, test_email: str = None, max_emails: int = None,
+                         allow_resend: bool = False) -> dict:
     """
     Send drafted emails via Resend, redirected to a single test recipient.
 
@@ -109,6 +110,11 @@ def send_outreach_emails(drafts: list, test_email: str = None, max_emails: int =
                      NOTHING is sent.
         max_emails:  Hard ceiling for this run. Defaults to MAX_EMAILS env var,
                      then discovery.max_emails_per_run in config, then 5.
+        allow_resend: Skip the already-sent ledger check. Only for the manual
+                     "send test" button in the UI, where the operator has
+                     explicitly asked to re-send one specific draft. Everything
+                     still goes to the test inbox, so a repeat is harmless. The
+                     automated pipeline never sets this.
 
     Returns a summary dict:
       {
@@ -187,7 +193,7 @@ def send_outreach_emails(drafts: list, test_email: str = None, max_emails: int =
             continue
 
         # Skip if already sent to this person in a previous run
-        if _already_sent(draft.protocol_name, draft.persona_name):
+        if not allow_resend and _already_sent(draft.protocol_name, draft.persona_name):
             skipped_already_sent += 1
             summary["results"].append({
                 "protocol": draft.protocol_name,

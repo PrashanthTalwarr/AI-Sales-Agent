@@ -546,6 +546,77 @@ async def pipeline_run(test_email: str = ""):
                              headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 
+class SendDraftRequest(BaseModel):
+    protocol_name: str
+    persona_name: str = ""
+    test_email: str = ""
+
+
+@app.post("/api/outreach/send")
+async def send_one_draft(req: SendDraftRequest):
+    """
+    Send a single drafted email on demand, from the draft drawer's Send button.
+
+    Goes to the test recipient like every other send — if none resolves, nothing
+    is delivered. Unlike a pipeline run this bypasses the already-sent ledger,
+    because the operator explicitly asked to send this one draft and it lands in
+    the test inbox either way.
+    """
+    from src.integrations.email_sender import send_outreach_emails
+
+    logger.info("POST /api/outreach/send — %s / %s -> %s",
+                req.protocol_name, req.persona_name or "<first>", req.test_email or "<env>")
+
+    name_l = req.protocol_name.lower()
+    candidates = [d for d in _state.outreach_drafts if d.protocol_name.lower() == name_l]
+    if not candidates:
+        candidates = [d for d in _state.outreach_drafts if name_l in d.protocol_name.lower()]
+    if req.persona_name:
+        exact = [d for d in candidates if d.persona_name == req.persona_name]
+        candidates = exact or candidates
+    if not candidates:
+        raise HTTPException(
+            status_code=404,
+            detail=f"No draft in memory for '{req.protocol_name}'. Run the pipeline first — "
+                   f"'Load Last Results' restores leads and contacts but not drafts.",
+        )
+
+    draft = candidates[0]
+    result = send_outreach_emails([draft], test_email=req.test_email, allow_resend=True)
+
+    if result["status"] == "no_test_recipient":
+        raise HTTPException(
+            status_code=400,
+            detail="No test recipient set. Enter an address in \"Send test emails to:\" "
+                   "or set RESEND_TEST_EMAIL in config/.env.",
+        )
+    if result["status"] == "resend_unavailable":
+        raise HTTPException(
+            status_code=503,
+            detail="Resend not configured — set RESEND_API_KEY in config/.env.",
+        )
+
+    row = result["results"][0] if result["results"] else {}
+    if row.get("status") != "sent":
+        raise HTTPException(status_code=502, detail=row.get("error", "Send failed."))
+
+    # Record it so the outreach history reflects what actually went out
+    try:
+        from src.store.json_store import save_outreach
+        save_outreach(result)
+    except Exception as e:
+        logger.error("send_one_draft: could not persist outreach record: %s", e)
+
+    return {
+        "sent": True,
+        "to": row.get("to"),
+        "real_recipient": row.get("real_email") or "",
+        "protocol": draft.protocol_name,
+        "persona": draft.persona_name,
+        "id": row.get("id"),
+    }
+
+
 @app.get("/api/outreach/sent")
 async def get_sent_outreach():
     """Returns all sent/replied outreach records from data/state.json."""
