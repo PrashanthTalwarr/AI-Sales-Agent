@@ -74,8 +74,17 @@ Go back to Render and set `CORS_ORIGINS` to your Vercel URL:
 https://your-project.vercel.app
 ```
 
-Add preview domains as a comma-separated list if you use them. Render restarts
-automatically. Without this the browser blocks every API call with a CORS error.
+Use the **production** URL (`your-project.vercel.app`), not a deployment-specific
+preview URL like `your-project-3mggmi3fq-you.vercel.app` — those change on every
+push, so pinning CORS to one breaks the next time you deploy.
+
+To allow preview deployments too, set `CORS_ORIGIN_REGEX` instead of listing them:
+
+```
+CORS_ORIGIN_REGEX=https://.*\.vercel\.app
+```
+
+Render restarts automatically. Without this the browser blocks every API call.
 
 ---
 

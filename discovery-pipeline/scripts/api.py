@@ -314,6 +314,12 @@ app = FastAPI(title="Discovery Pipeline API")
 _origins = [o.strip().rstrip("/") for o in os.getenv("CORS_ORIGINS", "").split(",") if o.strip()]
 CORS_ORIGINS = _origins or ["http://localhost:3000"]
 
+# Vercel gives every deployment its own preview hostname, so an exact allowlist
+# breaks whenever you open a preview build. CORS_ORIGIN_REGEX allows a whole
+# project's deployments, e.g.
+#   https://.*\.vercel\.app
+_ORIGIN_REGEX = os.getenv("CORS_ORIGIN_REGEX", "").strip() or None
+
 # A pipeline run costs real money (Claude calls) and can send email, so it is off
 # by default on a public deploy. Set ALLOW_PIPELINE_RUN=true to enable it, and
 # API_SECRET to require a shared secret header on top.
@@ -327,13 +333,14 @@ PIPELINE_COOLDOWN = int(os.getenv("PIPELINE_COOLDOWN_SECONDS", "900"))
 _run_lock = threading.Lock()
 _run_state = {"in_progress": False, "last_finished": 0.0}
 
-logger.info("CORS origins: %s", CORS_ORIGINS)
+logger.info("CORS origins: %s | regex: %s", CORS_ORIGINS, _ORIGIN_REGEX)
 logger.info("Pipeline runs allowed: %s | shared secret required: %s",
             ALLOW_PIPELINE_RUN, bool(API_SECRET))
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=CORS_ORIGINS,
+    allow_origin_regex=_ORIGIN_REGEX,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -592,7 +599,16 @@ async def get_all_drafts(protocol: str):
         # fuzzy match
         drafts = [d for d in pool if name_l in d.protocol_name.lower()]
     if not drafts:
-        raise HTTPException(status_code=404, detail=f"No drafts for '{protocol}'")
+        # A bare "no drafts" reads as a bug. Only leads that qualified in the last
+        # run have outreach written for them, so say which ones do.
+        available = sorted({d.protocol_name for d in pool})
+        hint = (" Drafts exist for: " + ", ".join(available) + "."
+                if available else " No drafts have been generated yet — run the pipeline.")
+        raise HTTPException(
+            status_code=404,
+            detail=f"No outreach written for '{protocol}' — only the top-scoring leads that "
+                   f"qualified in the last run get emails.{hint}",
+        )
     logger.info("GET /api/leads/%s/drafts — returning %d drafts", protocol, len(drafts))
     return {"protocol": protocol, "drafts": [_draft_to_dict(d) for d in drafts]}
 
