@@ -48,6 +48,7 @@ from src.monitoring.event_monitor import run_event_monitor
 from src.store.json_store import (
     load_leads_and_contacts,
     load_drafts,
+    derive_factor_scores,
     list_outreach,
     mark_replied as store_mark_replied,
 )
@@ -348,10 +349,14 @@ async def _hydrate_on_boot():
             logger.info("Startup: no saved leads to hydrate")
             return
         for lead in data["leads"]:
+            f = derive_factor_scores(lead)
             _state.scored_leads.append(ScoredLead(
                 protocol_name=lead["protocol_name"],
-                tvl_score=0, audit_status_score=0, velocity_score=0,
-                funding_score=0, reachability_score=0,
+                tvl_score=f["tvl_score"],
+                audit_status_score=f["audit_status_score"],
+                velocity_score=f["velocity_score"],
+                funding_score=f["funding_score"],
+                reachability_score=f["reachability_score"],
                 composite_score=lead["composite_score"],
                 score_tier=lead["score_tier"],
                 scoring_rationale=lead["scoring_rationale"],
@@ -571,13 +576,14 @@ async def pipeline_load():
     _state.enrichment_map.clear()
 
     for lead in db_data["leads"]:
+        f = derive_factor_scores(lead)
         _state.scored_leads.append(ScoredLead(
             protocol_name=lead["protocol_name"],
-            tvl_score=0,
-            audit_status_score=0,
-            velocity_score=0,
-            funding_score=0,
-            reachability_score=0,
+            tvl_score=f["tvl_score"],
+            audit_status_score=f["audit_status_score"],
+            velocity_score=f["velocity_score"],
+            funding_score=f["funding_score"],
+            reachability_score=f["reachability_score"],
             composite_score=lead["composite_score"],
             score_tier=lead["score_tier"],
             scoring_rationale=lead["scoring_rationale"],

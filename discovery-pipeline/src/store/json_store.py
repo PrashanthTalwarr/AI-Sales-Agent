@@ -121,6 +121,14 @@ def save_leads(scored_leads: list, enrichment_map: dict) -> int:
             "total_raised_usd":  int(enr.get("total_raised_usd", 0) or 0),
             "last_funding_date": enr.get("last_funding_date") or "",
             "scoring_rationale": lead.scoring_rationale,
+            # The five factor scores are persisted, not just the composite, so
+            # anything reading state back (the API on boot, the UI's score
+            # breakdown) can show how a score was built without re-running.
+            "tvl_score":           float(lead.tvl_score),
+            "audit_status_score":  float(lead.audit_status_score),
+            "velocity_score":      float(lead.velocity_score),
+            "funding_score":       float(lead.funding_score),
+            "reachability_score":  float(lead.reachability_score),
             "last_updated":      now,
         }
 
@@ -232,6 +240,46 @@ def save_drafts(drafts: list) -> int:
 def load_drafts() -> list:
     """Return persisted drafts as plain dicts, in save order."""
     return load_state()["drafts"]
+
+
+def derive_factor_scores(lead: dict) -> dict:
+    """
+    Return the five factor scores for a stored lead.
+
+    Rows written before factor scores were persisted only carry the composite,
+    so reconstruct them from the same rules the scorer uses rather than showing
+    a row of zeros. TVL, audit, and velocity follow directly from stored fields;
+    whatever the composite does not attribute to those three is split across
+    funding and reachability, so the parts always add back up to the total.
+    """
+    for key in ("tvl_score", "audit_status_score", "velocity_score",
+                "funding_score", "reachability_score"):
+        if key in lead:
+            return {k: float(lead.get(k, 0)) for k in (
+                "tvl_score", "audit_status_score", "velocity_score",
+                "funding_score", "reachability_score")}
+
+    tvl_usd = lead.get("tvl_usd", 0) or 0
+    tvl = (30 if tvl_usd >= 1e9 else 25 if tvl_usd >= 1e8 else
+           20 if tvl_usd >= 1e7 else 14 if tvl_usd >= 1e6 else 8)
+
+    audit = 20 if (lead.get("audit_providers") or "") else 25
+
+    base = {"very_high": 16, "high": 13, "moderate": 10, "low": 5, "inactive": 0}
+    signals = [s for s in (lead.get("ai_signals") or "").split(",") if s.strip()]
+    velocity = min(base.get(lead.get("shipping_velocity", ""), 0) + min(len(signals) * 2, 4), 20)
+
+    remainder = max(0.0, float(lead.get("composite_score", 0)) - tvl - audit - velocity)
+    funding = min(15.0, remainder)
+    reach = max(0.0, remainder - funding)
+
+    return {
+        "tvl_score": float(tvl),
+        "audit_status_score": float(audit),
+        "velocity_score": float(velocity),
+        "funding_score": funding,
+        "reachability_score": reach,
+    }
 
 
 def load_leads_and_contacts() -> dict:
