@@ -1,23 +1,28 @@
 # ============================================================================
 # Discovery Pipeline — Python Dependencies
+#
+# Pinned to the versions this project is actually developed and tested against.
+# An earlier set of pins had never been resolved from scratch and could not be:
+# langchain-core was pinned to 0.2.0 while langchain-anthropic 0.1.15 requires
+# >=0.2.2rc1, so a clean install failed even though local venvs worked.
 # ============================================================================
 
 # --- Core Pipeline ---
 requests==2.32.3              # HTTP calls to DeFiLlama, GitHub, etc.
-pydantic==2.7.0               # Data validation for pipeline models
+pydantic==2.13.4              # Data validation for pipeline models
 python-dotenv==1.0.1          # Environment variable management
 
 # --- Web API ---
-fastapi==0.111.0              # REST API framework
-uvicorn==0.30.1               # ASGI server for FastAPI
+fastapi==0.135.1              # REST API framework
+uvicorn==0.40.0               # ASGI server for FastAPI
 
 # --- AI / LLM ---
-anthropic>=0.28.0,<1          # Claude API (Anthropic SDK)
-langchain==0.2.0              # Agent orchestration (ReAct)
+anthropic==0.86.0             # Claude API (Anthropic SDK)
+langchain==0.2.0              # Agent orchestration
 langchain-anthropic==0.1.15   # Claude + LangChain integration
-langchain-core==0.2.0         # LangChain core (tools, prompts, messages)
+langchain-core==0.2.43        # LangChain core (tools, prompts, messages)
 
 # --- Integrations ---
-resend==2.2.0                 # Email delivery
+resend==2.26.0                # Email delivery
 
 # Persistence is a local JSON file (data/state.json) - no database driver needed.
