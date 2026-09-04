@@ -682,11 +682,41 @@ export default function Home() {
       // Losing the stream does not mean the run died — it keeps going server-side.
       // Poll health and finish properly when it completes, instead of leaving the
       // user with an error for a run that actually succeeded.
-      setPipelineLogs((prev) => [
-        ...prev,
-        "Log stream dropped — the run is still going. Waiting for it to finish...",
-      ]);
       (async () => {
+        // Distinguish "the stream dropped mid-run" from "the run never started".
+        // Both surface as an EventSource error, but only one of them means the
+        // pipeline is working — claiming a run is in progress when the request
+        // was refused sends the user off waiting for nothing.
+        let started = false;
+        try {
+          const h0 = await fetch(`${process.env.NEXT_PUBLIC_API_BASE ?? ""}/api/health`, {
+            cache: "no-store",
+          }).then((r) => r.json());
+          setHealth(h0);
+          started = h0.pipeline_run_in_progress;
+          if (!started) {
+            setPipelineStatus("error");
+            setPipelineLogs((prev) => [
+              ...prev,
+              h0.pipeline_runs_allowed
+                ? "The run was refused — another run may have just finished (they are rate limited)."
+                : "Live pipeline runs are disabled on this deployment. The results on screen came from a real run.",
+            ]);
+            return;
+          }
+        } catch {
+          setPipelineStatus("error");
+          setPipelineLogs((prev) => [
+            ...prev,
+            "Could not reach the API. If it is deployed, check that CORS_ORIGINS or CORS_ORIGIN_REGEX allows this site.",
+          ]);
+          return;
+        }
+
+        setPipelineLogs((prev) => [
+          ...prev,
+          "Log stream dropped — the run is still going. Waiting for it to finish...",
+        ]);
         for (let i = 0; i < 120; i++) {
           await new Promise((r) => setTimeout(r, 5000));
           try {
