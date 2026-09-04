@@ -314,11 +314,18 @@ app = FastAPI(title="Discovery Pipeline API")
 _origins = [o.strip().rstrip("/") for o in os.getenv("CORS_ORIGINS", "").split(",") if o.strip()]
 CORS_ORIGINS = _origins or ["http://localhost:3000"]
 
-# Vercel gives every deployment its own preview hostname, so an exact allowlist
-# breaks whenever you open a preview build. CORS_ORIGIN_REGEX allows a whole
-# project's deployments, e.g.
-#   https://.*\.vercel\.app
-_ORIGIN_REGEX = os.getenv("CORS_ORIGIN_REGEX", "").strip() or None
+# Vercel gives every deployment its own hostname — production plus one per
+# preview build — so any exact allowlist is wrong the moment you deploy again.
+# This frontend is hosted on Vercel by design, so *.vercel.app is allowed by
+# default; CORS_ORIGIN_REGEX overrides it, and "none" disables it entirely.
+#
+# Allowing these origins is not a meaningful security relaxation here: the API
+# has no cookies or user auth, so CORS restricts nothing an attacker could not
+# do with curl. The endpoints that cost money are gated separately, by
+# ALLOW_PIPELINE_RUN, the run cooldown, and the fail-closed email guard.
+_DEFAULT_ORIGIN_REGEX = r"https://.*\.vercel\.app"
+_regex_env = os.getenv("CORS_ORIGIN_REGEX", "").strip()
+_ORIGIN_REGEX = None if _regex_env.lower() == "none" else (_regex_env or _DEFAULT_ORIGIN_REGEX)
 
 # A pipeline run costs real money (Claude calls) and can send email, so it is off
 # by default on a public deploy. Set ALLOW_PIPELINE_RUN=true to enable it, and
