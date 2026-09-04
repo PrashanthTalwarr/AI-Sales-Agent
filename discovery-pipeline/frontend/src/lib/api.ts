@@ -118,6 +118,42 @@ async function get<T>(path: string): Promise<T> {
   return res.json();
 }
 
+export interface Health {
+  status: string;
+  leads: number;
+  drafts: number;
+  last_run: string | null;
+  pipeline_runs_allowed: boolean;
+  secret_required: boolean;
+  claude_configured: boolean;
+  email_configured: boolean;
+}
+
+/**
+ * Wait for the API to answer.
+ *
+ * A free-tier Render instance sleeps after 15 minutes idle and takes ~50s to
+ * wake. Without this the first visitor after a quiet spell sees a blank
+ * dashboard and assumes the project is broken, so the UI polls health and shows
+ * a waking state instead.
+ */
+export async function waitForApi(
+  onAttempt?: (attempt: number) => void,
+  maxAttempts = 30
+): Promise<Health | null> {
+  for (let i = 0; i < maxAttempts; i++) {
+    try {
+      const res = await fetch(`${BASE}/api/health`, { cache: "no-store" });
+      if (res.ok) return (await res.json()) as Health;
+    } catch {
+      /* backend still waking */
+    }
+    onAttempt?.(i + 1);
+    await new Promise((r) => setTimeout(r, 2000));
+  }
+  return null;
+}
+
 export const api = {
   getLeads: () =>
     get<{ leads: Lead[]; last_run: string | null }>("/api/leads"),

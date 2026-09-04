@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useRef, useEffect, useCallback } from "react";
-import { api, IS_DEMO, Lead, Draft, ToolCall, TokenUsage } from "@/lib/api";
+import { api, waitForApi, IS_DEMO, Health, Lead, Draft, ToolCall, TokenUsage } from "@/lib/api";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -479,6 +479,8 @@ export default function Home() {
   // so the markup matches on first paint.
   const [testEmail, setTestEmail] = useState(DEFAULT_TEST_EMAIL);
   const [testEmailError, setTestEmailError] = useState<string | null>(null);
+  const [health, setHealth] = useState<Health | null>(null);
+  const [waking, setWaking] = useState(false);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -503,6 +505,29 @@ export default function Home() {
   // Restore the saved test recipient after mount (localStorage is client-only)
   useEffect(() => {
     setTestEmail(readStoredTestEmail());
+  }, []);
+
+  // Wake the API if it is asleep, then pull whatever it already has loaded.
+  // A free-tier host takes ~50s to spin up; showing that beats a blank screen.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const quick = await Promise.race([
+        fetch(`${process.env.NEXT_PUBLIC_API_BASE ?? ""}/api/health`).then((r) => r.ok).catch(() => false),
+        new Promise<boolean>((r) => setTimeout(() => r(false), 2500)),
+      ]);
+      if (cancelled) return;
+      if (!quick) setWaking(true);
+      const h = await waitForApi();
+      if (cancelled) return;
+      setWaking(false);
+      setHealth(h);
+      if (h && h.leads > 0) refreshLeads();
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const refreshLeads = useCallback(async () => {
@@ -720,6 +745,28 @@ export default function Home() {
           </button>
         </div>
       </header>
+
+      {waking && (
+        <div className="shrink-0 px-5 py-2 bg-blue-500/10 border-b border-blue-500/25 text-xs text-blue-200/90 flex items-center gap-2">
+          <span className="inline-block w-2 h-2 rounded-full bg-blue-400 animate-pulse" />
+          <span>
+            Waking the API — free-tier instances sleep when idle and take up to a minute to
+            start. Everything loads automatically once it is up.
+          </span>
+        </div>
+      )}
+
+      {!IS_DEMO && health && !health.pipeline_runs_allowed && (
+        <div className="shrink-0 px-5 py-2 bg-amber-500/10 border-b border-amber-500/25 text-xs text-amber-200/90">
+          <span className="font-semibold">Live API</span>
+          <span className="text-amber-200/60"> · </span>
+          <span>
+            Serving {health.leads} protocols from a real run. Live pipeline runs are disabled
+            here — they cost Claude credits and can send email — so Run Pipeline is off. The
+            chat agent below is the real thing.
+          </span>
+        </div>
+      )}
 
       {IS_DEMO && (
         <div className="shrink-0 px-5 py-2 bg-amber-500/10 border-b border-amber-500/25 text-xs text-amber-200/90 flex flex-wrap items-center gap-x-2 gap-y-1">

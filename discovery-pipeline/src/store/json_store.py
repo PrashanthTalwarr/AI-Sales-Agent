@@ -28,6 +28,8 @@ _ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__
 DATA_DIR = os.path.join(_ROOT, "data")
 STATE_PATH = os.path.join(DATA_DIR, "state.json")
 LEDGER_PATH = os.path.join(DATA_DIR, "sent_ledger.json")
+# Committed snapshot used when no run has happened yet (fresh deploy, clean clone)
+SEED_PATH = os.path.join(DATA_DIR, "seed_state.json")
 
 _EMPTY_STATE = {"leads": [], "contacts": {}, "outreach": [], "drafts": [], "last_run": None}
 
@@ -65,7 +67,21 @@ def _write_json(path: str, payload) -> bool:
 
 
 def load_state() -> dict:
-    """Read the whole state file. Always returns the full shape."""
+    """
+    Read the whole state file. Always returns the full shape.
+
+    Falls back to the committed seed (data/seed_state.json) when no run has
+    happened yet. A hosted deploy starts from an empty, ephemeral disk, so
+    without this the API would come up with zero leads until someone triggered
+    a run — the seed means a fresh deploy serves real results immediately.
+    """
+    if not os.path.exists(STATE_PATH) and os.path.exists(SEED_PATH):
+        seed = _read_json(SEED_PATH, _EMPTY_STATE)
+        for key, empty in _EMPTY_STATE.items():
+            seed.setdefault(key, empty)
+        logger.info("No state.json — serving seed data (%d leads)", len(seed["leads"]))
+        return seed
+
     state = _read_json(STATE_PATH, _EMPTY_STATE)
     for key, empty in _EMPTY_STATE.items():
         state.setdefault(key, empty)

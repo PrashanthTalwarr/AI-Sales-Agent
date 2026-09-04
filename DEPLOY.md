@@ -1,110 +1,165 @@
-# Deploying the demo to Vercel
+# Deploying
 
-The hosted demo runs the Next.js frontend **only**. There is no Python backend in
-production: the app's own `/api/*` routes serve a snapshot of a real pipeline run
-from `frontend/src/lib/demo-data.json`.
+**Frontend on Vercel, Python API on Render.** Two services, one environment
+variable connecting them.
 
-That means the public link needs no API keys, costs nothing to run, never sleeps,
-and cannot send email or spend your Anthropic credits.
-
----
-
-## Why not deploy the backend too
-
-The FastAPI service does not fit serverless as written, and it is worth knowing why
-rather than discovering it mid-deploy:
-
-- A pipeline run takes 3–4 minutes. Vercel functions cap at 60s (Hobby) / 300s (Pro).
-- `/api/pipeline/run` spawns a thread and redirects `sys.stdout` to stream logs — that
-  model does not survive in a serverless invocation.
-- `data/state.json` and `data/sent_ledger.json` live on disk. Serverless filesystems are
-  ephemeral, so the **send ledger would reset** and the double-send guard would stop
-  working. That is a safety regression, not just lost data.
-- The API has no authentication. A public backend would let anyone trigger runs that
-  spend your Claude credits and Resend quota.
-
-If you later want a genuinely live deployment, put the backend on a host with a real
-process and a persistent disk (Railway, Fly.io, or Render with a paid disk), add an
-auth header, and set `NEXT_PUBLIC_API_BASE` on Vercel to point at it. Everything else
-already works — the frontend switches targets on that one variable.
-
----
-
-## Deploy
-
-### 1. Push the repo
-
-```bash
-git push origin main
+```
+Vercel (Next.js)  ──NEXT_PUBLIC_API_BASE──▶  Render (FastAPI + uvicorn)
+                                              serves data/seed_state.json
+                                              real Claude chat agent
 ```
 
-### 2. Import into Vercel
+If `NEXT_PUBLIC_API_BASE` is ever unset or the API is unreachable, the frontend
+falls back to its own `/api/*` routes, which serve a bundled snapshot — so the
+link never shows an empty page.
 
-1. vercel.com → **Add New → Project** → import the GitHub repo
-2. **Root Directory** → `discovery-pipeline/frontend` ← *the important one; the repo root is not the app*
-3. Framework preset: **Next.js** (auto-detected)
-4. Build/output settings: leave the defaults
-5. **Environment variables: add none.** Leaving `NEXT_PUBLIC_API_BASE` unset is what
-   turns demo mode on.
-6. **Deploy**
+---
 
-That is the whole deployment. The build is a normal `next build` — the same one that
-runs locally.
+## 1. Deploy the API to Render
 
-### 3. Check the live site
+1. render.io → **New → Blueprint**, point it at this repo. It reads `render.yaml`.
+   *(Or **New → Web Service** by hand with the settings below.)*
 
-- The amber **Demo** banner appears under the header
-- **Load Last Results** fills the sidebar with 58 scored protocols
+| Setting | Value |
+|---|---|
+| Root Directory | `discovery-pipeline` |
+| Runtime | Python 3 |
+| Build Command | `pip install -r requirements.txt` |
+| Start Command | `uvicorn scripts.api:app --host 0.0.0.0 --port $PORT` |
+| Health Check Path | `/api/health` |
+
+2. Environment variables (Render dashboard → Environment):
+
+| Key | Value |
+|---|---|
+| `ANTHROPIC_API_KEY` | your key — powers the live chat agent |
+| `ALLOW_PIPELINE_RUN` | `false` |
+| `CORS_ORIGINS` | your Vercel URL, added after step 2 |
+| `GITHUB_TOKEN` | optional, only needed for live runs |
+
+**Leave `RESEND_API_KEY` and `RESEND_TEST_EMAIL` unset.** With no test recipient
+the send step fails closed and delivers nothing, so the public API cannot email
+anyone even if a run were triggered.
+
+3. Deploy, then check `https://<your-service>.onrender.com/api/health`:
+
+```json
+{"status":"ok","leads":58,"drafts":3,"pipeline_runs_allowed":false,"claude_configured":true}
+```
+
+`leads: 58` on a first boot means the seed loaded correctly.
+
+---
+
+## 2. Deploy the frontend to Vercel
+
+1. vercel.com → **Add New → Project**, import the same repo
+2. **Root Directory: `discovery-pipeline/frontend`** ← the repo root is not the app
+3. Framework preset: Next.js (auto-detected)
+4. Environment variable:
+
+| Key | Value |
+|---|---|
+| `NEXT_PUBLIC_API_BASE` | `https://<your-service>.onrender.com` — no trailing slash |
+
+5. Deploy
+
+---
+
+## 3. Connect them
+
+Go back to Render and set `CORS_ORIGINS` to your Vercel URL:
+
+```
+https://your-project.vercel.app
+```
+
+Add preview domains as a comma-separated list if you use them. Render restarts
+automatically. Without this the browser blocks every API call with a CORS error.
+
+---
+
+## Verify
+
+- `/api/health` returns `leads: 58`
+- The Vercel URL loads 58 protocols with no clicking — the API hydrates its state on startup
 - Opening **Rocket Pool**, **Lido**, or **EigenCloud** shows a real Claude-written email
-- **Run Pipeline** replays the saved run's log, about 5 seconds
-- Asking the chat *"show me the warm leads"* returns the 8 real warm leads
+- The chat is **live Claude with real tool calls** — ask *"show me the warm leads"*
+- **Run Pipeline** returns a clear 403; it is disabled on purpose
 
 ---
 
-## Running locally against the real backend
+## Things that will bite you
 
-The same build talks to the live FastAPI service when you point it there:
+**Free instances sleep.** Render's free tier sleeps after 15 minutes idle and
+takes ~50s to wake. The frontend polls `/api/health` and shows a "waking the API"
+banner instead of a blank screen, but the first visitor after a quiet period
+still waits. Options: upgrade to Render Starter (~$7/mo, no sleep), or ping
+`/api/health` every 10 minutes from a free cron service like cron-job.org.
 
-```bash
-cd discovery-pipeline/frontend
-cp .env.local.example .env.local     # sets NEXT_PUBLIC_API_BASE=http://localhost:8000
-npm run dev
-```
+**The filesystem is ephemeral.** Render free has no persistent disk, so
+`data/state.json` and `data/sent_ledger.json` reset on every deploy and every
+wake. Reads are unaffected — `data/seed_state.json` is committed and loads as the
+fallback. But **the send ledger resets**, which is why live runs and email are
+both off in this configuration. If you ever enable them, add a Render disk
+mounted at `discovery-pipeline/data` first, or the double-send guard is not real.
 
-`.env.local` is gitignored on purpose. If it were committed, Vercel would load it and
-the deployed site would try to reach `localhost:8000`.
+**CORS is the usual failure.** A blank dashboard with console errors almost always
+means `CORS_ORIGINS` does not exactly match the Vercel origin. No trailing slash,
+and `https://` not `http://`.
 
-With `NEXT_PUBLIC_API_BASE` set, the demo routes are bypassed entirely, the banner
-disappears, and the test-recipient field comes back.
+**Cold starts affect the chat too.** The first message after a sleep waits for the
+wake plus the Claude call.
 
 ---
 
-## Refreshing the demo data
+## Demoing a live run in an interview
 
-The snapshot is generated from whatever is in `data/state.json`:
+Live runs are off by default because they spend Claude credits and can send
+email. To turn one on for a demo:
+
+1. Render → set `ALLOW_PIPELINE_RUN=true` and `API_SECRET=<something long>`
+2. Add a Render disk mounted at `discovery-pipeline/data` so the send ledger persists
+3. Set `RESEND_API_KEY` and `RESEND_TEST_EMAIL` only if you want it to actually send
+4. Trigger it with the secret:
+   `curl "https://<service>.onrender.com/api/pipeline/run?secret=<API_SECRET>"`
+5. Turn `ALLOW_PIPELINE_RUN` back to `false` afterwards
+
+---
+
+## Running locally
+
+Unchanged. Backend:
 
 ```bash
 cd discovery-pipeline
-python scripts/run_pipeline.py --test-email you@example.com   # optional: a fresh run
-python scripts/build_demo_fixture.py                          # regenerate the fixture
-cd frontend && npm run build                                  # verify it still builds
-git add -A && git commit -m "chore: refresh demo fixture" && git push
+uvicorn scripts.api:app --port 8000 --reload
 ```
 
-Vercel redeploys on push.
+Frontend:
+
+```bash
+cd discovery-pipeline/frontend
+cp .env.local.example .env.local     # NEXT_PUBLIC_API_BASE=http://localhost:8000
+npm run dev
+```
+
+`.env.local` is gitignored deliberately — Next.js loads it on Vercel too, so
+committing it would point the deployed site at `localhost:8000`.
 
 ---
 
-## What the demo does and does not do
+## Refreshing the deployed data
 
-| Works | Does not |
-|-------|----------|
-| 58 scored protocols with real factor breakdowns | Live DeFiLlama / GitHub calls |
-| Contacts found by GitHub + Claude web search | Live Claude calls |
-| Three real Claude-written outreach emails | Sending email (returns an explicit 501) |
-| Run Pipeline log replay | An actual pipeline run |
-| Chat answering from the saved run | The real LangChain agent |
+The API serves `data/seed_state.json`, which is committed. After a local run you
+want the world to see:
 
-The chat answers the questions the real agent's five tools cover, using the same
-snapshot the rest of the demo reads, so its numbers are accurate. Anything outside
-that returns an honest "this is a static demo" reply rather than a hallucination.
+```bash
+cd discovery-pipeline
+python scripts/run_pipeline.py --test-email you@example.com
+cp data/state.json data/seed_state.json
+python scripts/build_demo_fixture.py    # also refresh the frontend fallback
+git add -A && git commit -m "chore: refresh seed data" && git push
+```
+
+Both Render and Vercel redeploy on push.

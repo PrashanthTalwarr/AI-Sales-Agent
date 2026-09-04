@@ -299,12 +299,94 @@ def get_executor() -> AgentExecutor:
 
 app = FastAPI(title="Discovery Pipeline API")
 
+# ── Deployment config ─────────────────────────────────────────────────────────
+# CORS_ORIGINS is a comma-separated allowlist. Local dev needs nothing; a hosted
+# deploy sets it to the Vercel URL (plus preview domains if you use them).
+_origins = [o.strip() for o in os.getenv("CORS_ORIGINS", "").split(",") if o.strip()]
+CORS_ORIGINS = _origins or ["http://localhost:3000"]
+
+# A pipeline run costs real money (Claude calls) and can send email, so it is off
+# by default on a public deploy. Set ALLOW_PIPELINE_RUN=true to enable it, and
+# API_SECRET to require a shared secret header on top.
+ALLOW_PIPELINE_RUN = os.getenv("ALLOW_PIPELINE_RUN", "true").strip().lower() in ("1", "true", "yes")
+API_SECRET = os.getenv("API_SECRET", "").strip()
+
+logger.info("CORS origins: %s", CORS_ORIGINS)
+logger.info("Pipeline runs allowed: %s | shared secret required: %s",
+            ALLOW_PIPELINE_RUN, bool(API_SECRET))
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],
+    allow_origins=CORS_ORIGINS,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+def _check_secret(provided: str):
+    """Reject a request when API_SECRET is configured and the caller did not match it."""
+    if API_SECRET and (provided or "").strip() != API_SECRET:
+        raise HTTPException(
+            status_code=401,
+            detail="This endpoint requires the API secret. The hosted demo serves saved "
+                   "results; running the pipeline live is restricted.",
+        )
+
+
+@app.on_event("startup")
+async def _hydrate_on_boot():
+    """
+    Populate in-memory state from disk (or the committed seed) at startup.
+
+    A hosted deploy restarts on every push and, on a free tier, whenever it wakes
+    from sleep. Without this the first visitor would see an empty dashboard until
+    they thought to press "Load Last Results".
+    """
+    try:
+        data = load_leads_and_contacts()
+        if not data["leads"]:
+            logger.info("Startup: no saved leads to hydrate")
+            return
+        for lead in data["leads"]:
+            _state.scored_leads.append(ScoredLead(
+                protocol_name=lead["protocol_name"],
+                tvl_score=0, audit_status_score=0, velocity_score=0,
+                funding_score=0, reachability_score=0,
+                composite_score=lead["composite_score"],
+                score_tier=lead["score_tier"],
+                scoring_rationale=lead["scoring_rationale"],
+                model_version="stored",
+            ))
+            _state.enrichment_map[lead["protocol_name"]] = {
+                "tvl_usd":           lead.get("tvl_usd", 0),
+                "category":          lead.get("category", ""),
+                "shipping_velocity": lead.get("shipping_velocity", ""),
+                "ai_tool_signals":   [s for s in (lead.get("ai_signals") or "").split(", ") if s],
+                "contacts":          data["contacts"].get(lead["protocol_name"], []),
+            }
+        _state.outreach_drafts = _rehydrate_drafts()
+        _state.last_run = data["last_run"]
+        logger.info("Startup: hydrated %d leads and %d drafts",
+                    len(_state.scored_leads), len(_state.outreach_drafts))
+    except Exception as e:
+        logger.error("Startup hydration failed: %s", e)
+
+
+@app.get("/api/health")
+async def health():
+    """Liveness probe, and a quick way to see how a deploy is configured."""
+    from src.store.json_store import load_state
+    state = load_state()
+    return {
+        "status": "ok",
+        "leads": len(state["leads"]),
+        "drafts": len(state["drafts"]),
+        "last_run": state["last_run"],
+        "pipeline_runs_allowed": ALLOW_PIPELINE_RUN,
+        "secret_required": bool(API_SECRET),
+        "claude_configured": bool(os.getenv("ANTHROPIC_API_KEY", "").strip()),
+        "email_configured": bool(os.getenv("RESEND_API_KEY", "").strip()),
+    }
 
 
 # ── Request/response models ───────────────────────────────────────────────────
@@ -527,7 +609,7 @@ async def pipeline_load():
 
 
 @app.get("/api/pipeline/run")
-async def pipeline_run(test_email: str = ""):
+async def pipeline_run(test_email: str = "", secret: str = ""):
     """
     SSE endpoint — streams pipeline stdout line by line.
 
@@ -535,6 +617,14 @@ async def pipeline_run(test_email: str = ""):
     param because EventSource cannot send a request body. If neither resolves,
     the send step delivers nothing (see email_sender.send_outreach_emails).
     """
+    if not ALLOW_PIPELINE_RUN:
+        raise HTTPException(
+            status_code=403,
+            detail="Live pipeline runs are disabled on this deployment. The saved results "
+                   "from the last real run are loaded — use Load Last Results.",
+        )
+    _check_secret(secret)
+
     logger.info("GET /api/pipeline/run — starting pipeline via SSE stream (test_email=%s)",
                 test_email or "<falling back to RESEND_TEST_EMAIL>")
     output_queue: q_module.Queue = q_module.Queue()

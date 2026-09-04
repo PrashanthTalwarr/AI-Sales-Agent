@@ -1,0 +1,44 @@
+# Render blueprint for the Discovery Pipeline API.
+#
+# Render can read this directly (New -> Blueprint), or you can create the service
+# by hand with the same settings — the values below are the ones that matter.
+#
+# The frontend is NOT here; it goes on Vercel (see DEPLOY.md).
+
+services:
+  - type: web
+    name: discovery-pipeline-api
+    runtime: python
+    plan: free # free instances sleep after 15 min idle; see DEPLOY.md
+    region: oregon
+    rootDir: discovery-pipeline
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn scripts.api:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /api/health
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.0
+
+      # Claude — required for the chat agent and outreach generation
+      - key: ANTHROPIC_API_KEY
+        sync: false # set in the Render dashboard, never in this file
+
+      # Raises the GitHub limit from 60 to 5000 req/hr. Only needed for live runs.
+      - key: GITHUB_TOKEN
+        sync: false
+
+      # Comma-separated allowlist. Set to your Vercel URL after the frontend deploys.
+      - key: CORS_ORIGINS
+        sync: false
+
+      # Live pipeline runs cost Claude credits and can send email, so they are off
+      # on the public deploy. Flip to true (and set API_SECRET) to demo one live.
+      - key: ALLOW_PIPELINE_RUN
+        value: "false"
+
+      # Optional shared secret for /api/pipeline/run when it is enabled.
+      - key: API_SECRET
+        sync: false
+
+      # Resend is intentionally left unset. With no RESEND_TEST_EMAIL the send step
+      # fails closed and delivers nothing — the public API cannot email anyone.

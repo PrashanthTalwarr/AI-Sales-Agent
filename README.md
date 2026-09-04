@@ -12,14 +12,18 @@ integration to set up: clone it, add two API keys, and run it.
 
 ## Live Demo
 
-**[View the demo →](https://your-project.vercel.app)** *(replace with your Vercel URL after deploying)*
+**[View it live →](https://your-project.vercel.app)** *(add your URL after deploying)*
 
-The hosted demo is the frontend serving a snapshot of a real pipeline run: 58 scored
-protocols, contacts found via GitHub and Claude web search, and three outreach emails
-Claude actually wrote. No API keys, nothing to spin up, and email sending is disabled.
+- **Frontend:** Next.js on Vercel
+- **API:** FastAPI + uvicorn on Render
+- **Data:** a real pipeline run — 58 protocols scored, 18 contacts found, 3 emails written by Claude
 
-Deployment details, and why the Python backend is not deployed alongside it, are in
-[DEPLOY.md](DEPLOY.md).
+The chat agent on the live site is the real LangChain agent making real Claude tool
+calls against the deployed API. Pipeline runs are disabled in production because they
+spend credits and can send email; the code path is the same one that produced the data
+on screen.
+
+Setup, and the failure modes worth knowing about, are in [DEPLOY.md](DEPLOY.md).
 
 ---
 

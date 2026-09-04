@@ -20,6 +20,7 @@ data/output/*.csv
 data/output/*.json
 data/state.json
 data/sent_ledger.json
+# data/seed_state.json IS committed — it is the fallback a fresh deploy serves
 
 # Node
 node_modules/
