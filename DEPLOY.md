@@ -104,9 +104,19 @@ fallback. But **the send ledger resets**, which is why live runs and email are
 both off in this configuration. If you ever enable them, add a Render disk
 mounted at `discovery-pipeline/data` first, or the double-send guard is not real.
 
-**CORS is the usual failure.** A blank dashboard with console errors almost always
-means `CORS_ORIGINS` does not exactly match the Vercel origin. No trailing slash,
-and `https://` not `http://`.
+**CORS is the usual failure.** A dashboard that loads but stays empty almost always
+means `CORS_ORIGINS` does not match the Vercel origin. Use `https://`, not `http://`.
+Trailing slashes are stripped automatically — browsers send `Origin: https://site.app`
+with no trailing slash, so a configured `https://site.app/` would otherwise match
+nothing and block every request while the server logged no error at all.
+
+To check from a terminal, ask for the header a browser would need:
+
+```bash
+curl -s -D - -o /dev/null -H "Origin: https://your-site.vercel.app"   https://your-api.onrender.com/api/leads | grep -i access-control-allow-origin
+```
+
+No output means the origin is not allowed.
 
 **Cold starts affect the chat too.** The first message after a sleep waits for the
 wake plus the Claude call.

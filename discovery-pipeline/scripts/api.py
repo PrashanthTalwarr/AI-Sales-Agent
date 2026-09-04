@@ -303,7 +303,11 @@ app = FastAPI(title="Discovery Pipeline API")
 # ── Deployment config ─────────────────────────────────────────────────────────
 # CORS_ORIGINS is a comma-separated allowlist. Local dev needs nothing; a hosted
 # deploy sets it to the Vercel URL (plus preview domains if you use them).
-_origins = [o.strip() for o in os.getenv("CORS_ORIGINS", "").split(",") if o.strip()]
+# Trailing slashes are stripped: browsers send Origin without one
+# (https://site.app, never https://site.app/), so a configured value that keeps
+# the slash silently matches nothing and every request is blocked with no error
+# on the server side. Easiest deployment mistake to make and the hardest to see.
+_origins = [o.strip().rstrip("/") for o in os.getenv("CORS_ORIGINS", "").split(",") if o.strip()]
 CORS_ORIGINS = _origins or ["http://localhost:3000"]
 
 # A pipeline run costs real money (Claude calls) and can send email, so it is off
