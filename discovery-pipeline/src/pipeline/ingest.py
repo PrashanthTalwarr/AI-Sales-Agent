@@ -132,6 +132,58 @@ def _score_tvl_relevance(tvl: float) -> float:
 # ── GitHub Ingester (real API — public, rate limited) ────────────────────────
 
 
+_github_rate_limited = {"hit": False, "orgs": 0}
+
+
+def _warn_github_rate_limited(org_name: str):
+    """
+    Surface GitHub rate limiting loudly and exactly once.
+
+    This failure is silent and destructive if unannounced: with no GitHub data
+    every protocol scores 0 for shipping velocity, nothing clears the
+    qualification threshold, and the run ends with zero leads and zero drafts
+    while looking like it succeeded.
+    """
+    _github_rate_limited["orgs"] += 1
+    logger.warning("GitHub rate limited on %s (403/429)", org_name)
+    if _github_rate_limited["hit"]:
+        return
+    _github_rate_limited["hit"] = True
+    token_set = bool(os.getenv("GITHUB_TOKEN", "").strip())
+    print("", flush=True)
+    print("  !! GITHUB RATE LIMIT HIT — velocity scores will be 0 for affected protocols,", flush=True)
+    print("     which usually means NO leads qualify and NO outreach is generated.", flush=True)
+    if token_set:
+        print("     GITHUB_TOKEN is set but exhausted (5000 req/hr). Wait for the reset.", flush=True)
+    else:
+        print("     GITHUB_TOKEN is NOT set — you are on the 60 req/hr unauthenticated limit.", flush=True)
+        print("     Add a token to config/.env to raise it to 5000 req/hr:", flush=True)
+        print("     github.com -> Settings -> Developer settings -> Personal access tokens", flush=True)
+        print("     (no scopes needed — it only reads public repos)", flush=True)
+    print("", flush=True)
+
+
+def check_github_budget() -> dict:
+    """Report the current GitHub rate-limit budget before a run burns through it."""
+    try:
+        resp = requests.get(f"{GITHUB_API}/rate_limit", headers=github_headers(), timeout=10)
+        if resp.status_code != 200:
+            return {}
+        core = resp.json().get("resources", {}).get("core", {})
+        remaining, limit = core.get("remaining", 0), core.get("limit", 0)
+        authed = limit > 60
+        print(f"  GitHub budget: {remaining}/{limit} requests remaining "
+              f"({'authenticated' if authed else 'UNAUTHENTICATED — set GITHUB_TOKEN'})", flush=True)
+        if remaining < 30:
+            print("  !! Not enough GitHub budget for a full run — velocity will score 0 and", flush=True)
+            print("     leads are unlikely to qualify. Wait for the reset or set GITHUB_TOKEN.", flush=True)
+        logger.info("GitHub rate limit: %s/%s remaining", remaining, limit)
+        return core
+    except requests.RequestException as e:
+        logger.debug("Could not read GitHub rate limit: %s", e)
+        return {}
+
+
 def ingest_github_activity(org_name: str) -> Optional[RawSignal]:
     """
     Check a GitHub org for Solidity/Rust activity and AI tool signals.
@@ -158,8 +210,8 @@ def ingest_github_activity(org_name: str) -> Optional[RawSignal]:
                 timeout=15
             )
 
-        if resp.status_code == 403:
-            logger.warning(f"GitHub rate limit hit for {org_name} (403). Set GITHUB_TOKEN in .env for 5000 req/hr")
+        if resp.status_code in (403, 429):
+            _warn_github_rate_limited(org_name)
             return None
         if resp.status_code != 200:
             logger.warning(f"GitHub {org_name}: unexpected status {resp.status_code}")
@@ -408,6 +460,7 @@ def run_full_ingest(config_path: str = "config/scoring_weights.json") -> list[Ra
 
     # 2. GitHub — orgs extracted dynamically from DeFiLlama results
     print("\nGitHub — scanning orgs from DeFiLlama data:", flush=True)
+    check_github_budget()
     max_orgs = config.get("discovery", {}).get("github_orgs_per_protocol", 3)
     seen_orgs: set[str] = set()
 

@@ -26,7 +26,7 @@ function uid() {
 // Every outreach email is redirected to this single address. Replace it with
 // your own so the emails land in an inbox you can actually check.
 
-const DEFAULT_TEST_EMAIL = "prashanthtalwarr@gmail.com";
+const DEFAULT_TEST_EMAIL = "dr.nobody0501@gmail.com";
 const TEST_EMAIL_KEY = "discovery.testEmail";
 
 function isValidEmail(value: string) {
