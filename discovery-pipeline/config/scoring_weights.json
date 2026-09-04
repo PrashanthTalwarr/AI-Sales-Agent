@@ -3,7 +3,6 @@
   "hypothesis": "A",
   "context": "web3",
   "description": "Lead scoring weights for Hypothesis A (Web3): AI-generated smart contract security gaps",
-
   "discovery": {
     "min_tvl_usd": 50000000,
     "max_protocols_per_run": 50,
@@ -11,10 +10,25 @@
     "max_contacts_per_protocol": 3,
     "max_emails_per_run": 5,
     "github_orgs_per_protocol": 3,
-    "target_categories": ["Dexes", "Lending", "Yield", "Bridge", "Liquid Staking", "RWA", "CDP", "Derivatives", "Restaking", "Chain"],
-    "exclude_categories": ["NFT Marketplace", "Gaming", "Launchpad", "Options Vault"]
+    "target_categories": [
+      "Dexes",
+      "Lending",
+      "Yield",
+      "Bridge",
+      "Liquid Staking",
+      "RWA",
+      "CDP",
+      "Derivatives",
+      "Restaking",
+      "Chain"
+    ],
+    "exclude_categories": [
+      "NFT Marketplace",
+      "Gaming",
+      "Launchpad",
+      "Options Vault"
+    ]
   },
-
   "weights": {
     "tvl_and_funds_at_risk": {
       "max_score": 30,
@@ -43,13 +57,18 @@
     },
     "shipping_velocity": {
       "max_score": 20,
-      "description": "Faster shipping = more unreviewed code = more risk surface",
+      "description": "Faster shipping = more unreviewed code = more risk surface. Base tier plus a bonus for detected AI coding-tool signals; base max 16 + bonus max 4 = max_score 20.",
       "rules": {
-        "daily_commits_new_contracts_deploying_weekly": 20,
-        "active_development_multiple_repos": 16,
-        "moderate_activity_monthly_deploys": 12,
-        "slow_development_stable_protocol": 6,
+        "daily_commits_new_contracts_deploying_weekly": 16,
+        "active_development_multiple_repos": 13,
+        "moderate_activity_monthly_deploys": 10,
+        "slow_development_stable_protocol": 5,
         "no_recent_activity": 0
+      },
+      "ai_tool_signal_bonus": {
+        "description": "Bonus per detected AI coding-tool signal (.cursorrules, Copilot config, etc.)",
+        "points_per_signal": 2,
+        "max_bonus": 4
       }
     },
     "funding_recency": {
@@ -71,23 +90,21 @@
         "team_doxxed_active_on_twitter": 8,
         "team_doxxed_reachable_via_discord_telegram": 6,
         "team_partially_doxxed": 4,
-        "fully_anonymous_team": 2
+        "fully_anonymous_team": 2,
+        "team_unknown": 3
       }
     }
   },
-
   "qualification_filters": {
     "min_composite_score": 75,
     "exclude_existing_clients": true,
     "exclude_dead_protocols": true,
     "require_active_github_in_last_90_days": true
   },
-
   "tier_thresholds": {
     "hot": 90,
     "warm": 75,
     "cool": 0
   },
-
   "notes": "Weights calibrated for initial discovery. After 10 calls, recalibrate based on which factors predicted booking + pain confirmation. discovery.target_categories maps to DeFiLlama category field names. max_qualified_leads capped at 3 for demo cost management. In production, remove the cap and let score threshold filter naturally."
 }
