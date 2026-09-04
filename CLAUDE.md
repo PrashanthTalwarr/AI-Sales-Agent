@@ -19,10 +19,9 @@ discovery-pipeline/
 │   ├── agents/
 │   │   ├── outreach_agent.py   Claude email generation + template fallback
 │   │   └── signal_agent.py     [DEAD] not imported anywhere
-│   ├── integrations/     contacts.py, email_sender.py, hubspot.py, slack_alerts.py
+│   ├── integrations/     contacts.py, email_sender.py
 │   ├── monitoring/       event_monitor.py (DeFiLlama exploit/funding detection)
-│   ├── db/store.py       PostgreSQL via raw psycopg2 — THE live DB layer
-│   ├── database/         [DEAD] SQLAlchemy models + schema.sql, referenced by nothing
+│   ├── store/json_store.py   JSON persistence (data/state.json) + send ledger
 │   └── utils/            claude_client, config, github, json_utils, token_tracker
 ├── config/
 │   ├── scoring_weights.json   ICP: discovery filters, weights, tier thresholds
@@ -43,12 +42,13 @@ discovery-pipeline/
    `web_search` for leadership; merged, deduped by name, sorted by role priority.
 6. **Outreach** (`agents/outreach_agent.py`) — one Claude call per contact
    (callers currently slice `contacts[:1]`, so one email per protocol).
-7. **Send** (`email_sender.py`) — Resend, with a Postgres already-sent guard.
-8. **Persist / sync** — Postgres (`db/store.py`), HubSpot, Slack.
+7. **Send** (`email_sender.py`) — Resend, guarded by the on-disk send ledger
+   (`data/sent_ledger.json`), which is written immediately after each successful send.
+8. **Persist** — `data/state.json` via `store/json_store.py` (atomic writes).
 
 Two entry points run this: `run_pipeline.main()` (CLI) and `_do_pipeline_run()` in
 `api.py` (UI). **They are near-duplicates and have drifted** — the API version omits
-Slack hot-lead alerts, the event monitor, and CSV/JSON export.
+the event monitor and CSV/JSON export.
 
 ---
 
@@ -71,7 +71,8 @@ python scripts/run_pipeline.py --no-llm    # template outreach, no Claude
 ```
 
 - UI: `http://localhost:3000` · API docs: `http://localhost:8000/docs`
-- Postgres: `CREATE DATABASE discovery_pipeline;` — schema auto-creates on first run.
+- Persistence is `data/state.json` plus `data/sent_ledger.json`; both are created on
+  first write and are gitignored. No database to provision.
 - There is **no test suite** and no linter config. Verification today means running
   the pipeline or hitting endpoints.
 
@@ -86,9 +87,6 @@ python scripts/run_pipeline.py --no-llm    # template outreach, no Claude
 | Claude API (Anthropic SDK) | `ANTHROPIC_API_KEY` | `utils/claude_client.py` → `agents/outreach_agent.py`, `integrations/contacts.py` (web_search tool) |
 | Claude via LangChain (`ChatAnthropic`) | same key | `scripts/api.py` chat agent |
 | Resend | `RESEND_API_KEY`, `RESEND_FROM_EMAIL`, `RESEND_TEST_EMAIL` | `integrations/email_sender.py` |
-| HubSpot | `HUBSPOT_API_KEY` | `integrations/hubspot.py`, `api.py` `/api/hubspot/push`, `/api/outreach/replied` |
-| Slack webhook | `SLACK_WEBHOOK_URL` | `integrations/slack_alerts.py` |
-| PostgreSQL | `DATABASE_URL` | `db/store.py` |
 
 Every integration degrades to a no-op when its key is missing — keep that property.
 
@@ -100,7 +98,7 @@ Every integration degrades to a no-op when its key is missing — keep that prop
   what is real vs. seeded. Match this style.
 - **Dual output**: `print(..., flush=True)` for user-facing pipeline progress (the SSE endpoint
   captures stdout), `logger.*` for detail. Don't drop the `flush=True`.
-- **Lazy client init**: Anthropic/HubSpot/Resend clients are created inside functions, never at
+- **Lazy client init**: Anthropic and Resend clients are created inside functions, never at
   import time, so `dotenv` loads first. Preserve this.
 - **Dataclasses** for pipeline records (`RawSignal`, `EnrichedProfile`, `ScoredLead`,
   `OutreachDraft`, `Contact`). Plain dicts for enrichment/persona maps.
@@ -123,11 +121,10 @@ Every integration degrades to a no-op when its key is missing — keep that prop
 - **No tests, no evals.** Nothing verifies scoring, tool selection, or outreach quality.
 - **Shared mutable globals.** `_state` and `_chat_history` in `api.py` are unguarded, and
   `/api/pipeline/run` swaps `sys.stdout` process-wide from a worker thread.
-- **Dead code**: `src/database/`, `src/agents/signal_agent.py`, `scripts/agent.py` (~1100 lines).
+- **Dead code**: `src/agents/signal_agent.py`, `scripts/agent.py` — the latter still imports
+  the removed HubSpot/Slack modules and no longer runs. Both are slated for deletion.
 - **Stale Anthropic surface**: default model `claude-sonnet-4-20250514`; `token_tracker` hardcodes
   $3/$15 per MTok; `contacts.py` uses the `web_search_20250305` tool variant.
-- **Frontend/backend drift**: `api.chat()` targets a nonexistent `/api/chat` route; the `Contact`
-  TS interface fields don't match what `/api/leads` returns.
 - **Committed artifact**: `app.log` is tracked in git.
 
 ---

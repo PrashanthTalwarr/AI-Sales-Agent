@@ -2,11 +2,12 @@ const BASE = "http://localhost:8000";
 
 export interface Contact {
   name: string;
-  title: string;
+  role: string;
   email: string;
-  linkedin_url: string;
   twitter: string;
-  organization: string;
+  github: string;
+  source: string;
+  confidence: string;
 }
 
 export interface Lead {
@@ -108,9 +109,6 @@ async function get<T>(path: string): Promise<T> {
 }
 
 export const api = {
-  chat: (message: string) =>
-    post<ChatResponse>("/api/chat", { message }),
-
   getLeads: () =>
     get<{ leads: Lead[]; last_run: string | null }>("/api/leads"),
 
@@ -126,12 +124,6 @@ export const api = {
   loadResults: () =>
     post<LoadResult>("/api/pipeline/load"),
 
-  pushHubspot: (protocol_name: string) =>
-    post<{ contact_id: string; protocol: string }>("/api/hubspot/push", { protocol_name }),
-
-  sendSlack: (text: string) =>
-    post<{ sent: boolean }>("/api/slack/send", { text }),
-
   clearChat: () =>
     post<{ cleared: boolean }>("/api/chat/clear"),
 
@@ -139,7 +131,7 @@ export const api = {
     get<{ results: SentOutreach[] }>("/api/outreach/sent"),
 
   markReplied: (protocol_name: string, persona_name: string, reply_body: string) =>
-    post<{ db_updated: boolean; deal_id: string | null; protocol: string; persona: string }>(
+    post<{ updated: boolean; protocol: string; persona: string }>(
       "/api/outreach/replied",
       { protocol_name, persona_name, reply_body }
     ),

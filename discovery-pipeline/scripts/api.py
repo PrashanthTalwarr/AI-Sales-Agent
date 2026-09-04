@@ -44,16 +44,12 @@ from langchain_core.messages import HumanMessage, AIMessage
 
 from src.pipeline.score import ScoredLead
 from src.agents.outreach_agent import OutreachDraft
-from src.integrations.hubspot import (
-    get_hubspot_client,
-    ensure_custom_properties,
-    push_batch_to_hubspot,
-    create_company,
-    create_contact,
-)
-from src.integrations.slack_alerts import send_slack_alert
 from src.monitoring.event_monitor import run_event_monitor
-from src.db.store import load_leads_from_db
+from src.store.json_store import (
+    load_leads_and_contacts,
+    list_outreach,
+    mark_replied as store_mark_replied,
+)
 from src.utils import token_tracker
 
 # ── Logging ───────────────────────────────────────────────────────────────────
@@ -196,34 +192,6 @@ def get_pipeline_summary() -> str:
 
 
 @tool
-def push_to_hubspot(protocol_name: str) -> str:
-    """Push a lead to HubSpot CRM."""
-    logger.info("tool:push_to_hubspot protocol=%s", protocol_name)
-    lead = _state.find_lead(protocol_name)
-    if not lead:
-        logger.warning("tool:push_to_hubspot — no lead found for '%s'", protocol_name)
-        return f"No lead found for '{protocol_name}'."
-    client = get_hubspot_client()
-    if not client:
-        logger.warning("tool:push_to_hubspot — HubSpot client not available")
-        return "HubSpot not configured."
-    ensure_custom_properties(client)
-    results = push_batch_to_hubspot(
-        [lead],
-        _state.enrichment_map,
-        _state.persona_map,
-    )
-    protocol_result = results.get(lead.protocol_name, {})
-    company_id = protocol_result.get("company_id")
-    contacts = protocol_result.get("contacts", [])
-    if company_id:
-        logger.info("tool:push_to_hubspot — company created id=%s for %s", company_id, lead.protocol_name)
-    else:
-        logger.error("tool:push_to_hubspot — push failed for %s", lead.protocol_name)
-    return f"HubSpot: {lead.protocol_name} company={company_id}, contacts={len(contacts)}" if company_id else f"Push failed for {lead.protocol_name}"
-
-
-@tool
 def run_market_monitor() -> str:
     """Check DeFiLlama for exploits, funding rounds, and governance proposals."""
     logger.info("tool:run_market_monitor — scanning for %d pipeline protocols", len(_state.scored_leads))
@@ -265,21 +233,9 @@ def get_contacts(protocol_name: str) -> str:
     return "\n".join(lines)
 
 
-@tool
-def send_slack(text: str) -> str:
-    """Send a message to the Slack channel."""
-    logger.info("tool:send_slack — message length=%d", len(text))
-    sent = send_slack_alert({"text": text})
-    if sent:
-        logger.info("tool:send_slack — delivered")
-    else:
-        logger.warning("tool:send_slack — not delivered (Slack not configured or webhook failed)")
-    return "Slack message sent." if sent else "Slack not configured or send failed."
-
-
 AGENT_TOOLS = [
     get_pipeline_results, get_outreach_draft,
-    get_pipeline_summary, push_to_hubspot, run_market_monitor, send_slack,
+    get_pipeline_summary, run_market_monitor,
     get_contacts,
 ]
 
@@ -329,10 +285,6 @@ app.add_middleware(
 
 class ChatRequest(BaseModel):
     message: str
-
-class SlackRequest(BaseModel):
-    text: str
-
 
 # ── Endpoints ─────────────────────────────────────────────────────────────────
 
@@ -404,7 +356,7 @@ async def chat_stream(req: ChatRequest):
         logger.info("POST /api/chat/stream — tools: %s | chars: %d",
                     [tc["tool"] for tc in tool_calls_result], len(full_response))
 
-        refresh_tools = {"run_pipeline", "get_pipeline_results", "push_to_hubspot"}
+        refresh_tools = {"run_pipeline", "get_pipeline_results"}
         should_refresh = any(tc["tool"] in refresh_tools for tc in tool_calls_result)
         yield f"data: {json.dumps({'type': 'done', 'tool_calls': tool_calls_result, 'refresh': should_refresh})}\n\n"
 
@@ -498,13 +450,13 @@ async def get_all_drafts(protocol: str):
 @app.post("/api/pipeline/load")
 async def pipeline_load():
     logger.info("POST /api/pipeline/load")
-    db_data = load_leads_from_db()
+    db_data = load_leads_and_contacts()
 
     if not db_data["leads"]:
-        logger.info("POST /api/pipeline/load — database is empty")
+        logger.info("POST /api/pipeline/load — data/state.json is empty")
         return {"loaded": False, "total": 0, "hot": 0, "warm": 0, "drafts": 0, "last_run": None}
 
-    # Rebuild _state from DB rows
+    # Rebuild _state from the JSON store
     _state.scored_leads.clear()
     _state.enrichment_map.clear()
 
@@ -587,70 +539,13 @@ async def pipeline_run():
                              headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 
-@app.post("/api/hubspot/push")
-async def hubspot_push(body: dict):
-    protocol = body.get("protocol_name", "")
-    logger.info("POST /api/hubspot/push — protocol=%s", protocol)
-    lead = _state.find_lead(protocol)
-    if not lead:
-        logger.warning("POST /api/hubspot/push — no lead found for '%s'", protocol)
-        raise HTTPException(status_code=404, detail=f"No lead for '{protocol}'")
-    client = get_hubspot_client()
-    if not client:
-        logger.warning("POST /api/hubspot/push — HubSpot not configured")
-        raise HTTPException(status_code=503, detail="HubSpot not configured")
-    ensure_custom_properties(client)
-    results = push_batch_to_hubspot(
-        [lead],
-        _state.enrichment_map,
-        _state.persona_map,
-    )
-    protocol_result = results.get(lead.protocol_name, {})
-    company_id = protocol_result.get("company_id")
-    contacts = protocol_result.get("contacts", [])
-    if company_id:
-        logger.info("POST /api/hubspot/push — company created id=%s for %s", company_id, lead.protocol_name)
-    else:
-        logger.error("POST /api/hubspot/push — failed for %s", lead.protocol_name)
-    return {"company_id": company_id, "contacts": contacts, "protocol": lead.protocol_name}
-
-
 @app.get("/api/outreach/sent")
 async def get_sent_outreach():
-    """Returns all sent outreach records from DB for dynamic reply selection."""
-    from src.db.store import _get_conn
+    """Returns all sent/replied outreach records from data/state.json."""
     try:
-        conn = _get_conn()
-        if not conn:
-            return {"results": []}
-        with conn:
-            with conn.cursor() as cur:
-                cur.execute("""
-                    SELECT o.protocol_name, o.persona_name, o.persona_role,
-                           o.to_email, o.subject, o.sent_at, o.status,
-                           l.composite_score, l.score_tier, l.tvl_usd
-                    FROM outreach o
-                    LEFT JOIN leads l ON l.protocol_name = o.protocol_name
-                    WHERE o.status IN ('sent', 'replied')
-                    ORDER BY o.sent_at DESC
-                """)
-                rows = cur.fetchall()
-        conn.close()
-        return {"results": [
-            {
-                "protocol_name":  r[0],
-                "persona_name":   r[1],
-                "persona_role":   r[2],
-                "to_email":       r[3],
-                "subject":        r[4],
-                "sent_at":        r[5].isoformat() if r[5] else None,
-                "status":         r[6],
-                "score":          float(r[7]) if r[7] else None,
-                "tier":           r[8],
-                "tvl_usd":        r[9],
-            }
-            for r in rows
-        ]}
+        results = list_outreach()
+        logger.info("GET /api/outreach/sent — %d records", len(results))
+        return {"results": results}
     except Exception as e:
         logger.error("GET /api/outreach/sent failed: %s", e)
         return {"results": []}
@@ -665,143 +560,21 @@ class MarkRepliedRequest(BaseModel):
 @app.post("/api/outreach/replied")
 async def mark_replied(req: MarkRepliedRequest):
     """
-    Manually mark an outreach as replied.
-    - Updates DB: status → replied, saves reply body + timestamp
-    - Creates a HubSpot Deal in the Discovery Pipeline Outreach pipeline
-    - Fires a Slack alert
+    Mark an outreach record as replied in data/state.json.
+    Stores the reply body alongside the original message.
     """
-    from src.integrations.slack_alerts import send_slack_alert
-    from src.db.store import _get_conn
-    from datetime import datetime
-
-    logger.info("POST /api/outreach/replied — %s / %s", req.protocol_name, req.persona_name)
-
-    # ── 1. Update PostgreSQL ──────────────────────────────────────────
-    db_updated = False
-    try:
-        conn = _get_conn()
-        if conn:
-            with conn:
-                with conn.cursor() as cur:
-                    cur.execute("""
-                        UPDATE outreach
-                        SET status = 'replied',
-                            body   = CASE WHEN %s != '' THEN body || E'\\n\\n--- REPLY ---\\n' || %s ELSE body END
-                        WHERE protocol_name = %s AND persona_name = %s
-                    """, (req.reply_body, req.reply_body, req.protocol_name, req.persona_name))
-                    db_updated = cur.rowcount > 0
-            conn.close()
-    except Exception as e:
-        logger.error("mark_replied: DB update failed: %s", e)
-
-    # ── 2a. Update contact lead status to CONNECTED ───────────────────
-    contact_id = None
-    company_id = None
-    try:
-        from src.integrations.hubspot import get_hubspot_client, find_contact, find_company
-        client = get_hubspot_client()
-        if client:
-            from hubspot.crm.contacts import SimplePublicObjectInput as ContactUpdateInput
-            name_parts = req.persona_name.split(" ", 1)
-            firstname = name_parts[0]
-            lastname  = name_parts[1] if len(name_parts) > 1 else f"({req.protocol_name})"
-            contact_id = find_contact(client, firstname, lastname)
-            company_id = find_company(client, req.protocol_name)
-            if contact_id:
-                client.crm.contacts.basic_api.update(
-                    contact_id=contact_id,
-                    simple_public_object_input=ContactUpdateInput(
-                        properties={"hs_lead_status": "CONNECTED"}
-                    )
-                )
-                logger.info("mark_replied: contact %s status → CONNECTED", contact_id)
-    except Exception as e:
-        logger.error("mark_replied: contact status update failed: %s", e)
-
-    # ── 2b. Create HubSpot Deal (requires paid plan) ──────────────────
-    deal_id = None
-    try:
-        from src.integrations.hubspot import get_hubspot_client
-        client = get_hubspot_client()
-        if client:
-            from hubspot.crm.deals import SimplePublicObjectInputForCreate as DealInput
-
-            deal_props = {
-                "dealname":   f"{req.protocol_name} — {req.persona_name}",
-                "dealstage":  "Connected",
-                "pipeline":   "Discovery Pipeline Outreach",
-                "closedate":  "",
-            }
-            deal_response = client.crm.deals.basic_api.create(
-                simple_public_object_input_for_create=DealInput(properties=deal_props)
-            )
-            deal_id = deal_response.id
-
-            # Associate deal with contact and company
-            if contact_id:
-                client.crm.associations.v4.basic_api.create_default(
-                    from_object_type="deals",
-                    from_object_id=deal_id,
-                    to_object_type="contacts",
-                    to_object_id=contact_id,
-                )
-            if company_id:
-                client.crm.associations.v4.basic_api.create_default(
-                    from_object_type="deals",
-                    from_object_id=deal_id,
-                    to_object_type="companies",
-                    to_object_id=company_id,
-                )
-            logger.info("mark_replied: HubSpot deal created id=%s for %s/%s", deal_id, req.protocol_name, req.persona_name)
-    except Exception:
-        pass  # Deals require paid HubSpot plan — silently skip
-
-    # ── 3. Slack alert ────────────────────────────────────────────────
-    reply_snippet = req.reply_body[:200] + "..." if len(req.reply_body) > 200 else req.reply_body
-    slack_message = {
-        "text": f"💬 Reply received — {req.protocol_name}",
-        "blocks": [
-            {
-                "type": "header",
-                "text": {"type": "plain_text", "text": f"💬 Reply received — {req.protocol_name}"}
-            },
-            {
-                "type": "section",
-                "fields": [
-                    {"type": "mrkdwn", "text": f"*From:* {req.persona_name}"},
-                    {"type": "mrkdwn", "text": f"*Company:* {req.protocol_name}"},
-                    {"type": "mrkdwn", "text": f"*Time:* {datetime.now().strftime('%Y-%m-%d %H:%M')}"},
-                    {"type": "mrkdwn", "text": f"*Deal created:* {'Yes' if deal_id else 'No'}"},
-                ]
-            },
-            *(
-                [{
-                    "type": "section",
-                    "text": {"type": "mrkdwn", "text": f"*Reply:*\n_{reply_snippet}_"}
-                }] if reply_snippet else []
-            ),
-            {
-                "type": "section",
-                "text": {"type": "mrkdwn", "text": "✋ *Human follow-up needed — check HubSpot to take over.*"}
-            }
-        ]
-    }
-    send_slack_alert(slack_message)
-
+    logger.info("POST /api/outreach/replied - %s / %s", req.protocol_name, req.persona_name)
+    updated = store_mark_replied(req.protocol_name, req.persona_name, req.reply_body)
+    if not updated:
+        raise HTTPException(
+            status_code=404,
+            detail=f"No outreach record for {req.persona_name} at {req.protocol_name}",
+        )
     return {
-        "db_updated": db_updated,
-        "deal_id": deal_id,
+        "updated": updated,
         "protocol": req.protocol_name,
         "persona": req.persona_name,
     }
-
-
-@app.post("/api/slack/send")
-async def slack_send(req: SlackRequest):
-    logger.info("POST /api/slack/send — text length=%d", len(req.text))
-    sent = send_slack_alert({"text": req.text})
-    logger.info("POST /api/slack/send — delivered=%s", sent)
-    return {"sent": sent}
 
 
 @app.post("/api/chat/clear")
@@ -841,8 +614,7 @@ def _do_pipeline_run():
     from src.agents.outreach_agent import run_outreach_generation
     from src.integrations.contacts import find_contacts_for_qualified_leads
     from src.integrations.email_sender import send_outreach_emails
-    from src.integrations.hubspot import push_batch_to_hubspot
-    from src.db.store import ensure_schema, save_leads, save_contacts, save_outreach
+    from src.store.json_store import save_leads, save_contacts, save_outreach
     from src.utils.config import load_config
 
     _cfg = load_config()
@@ -906,17 +678,11 @@ def _do_pipeline_run():
 
     # Send emails
     send_results = send_outreach_emails(outreach)
-    from src.integrations.slack_alerts import alert_outreach_sent
-    alert_outreach_sent(send_results)
 
-    # Save everything to PostgreSQL
-    ensure_schema()
+    # Persist everything to data/state.json
     save_leads(scored, enrichment_map)
     save_contacts(contacts_map)
     save_outreach(send_results)
-
-    # Push only the qualified leads (top 3 that got emails) to HubSpot
-    push_batch_to_hubspot(qualified, enrichment_map, persona_map, send_results=send_results)
 
     _state.scored_leads    = scored
     _state.outreach_drafts = outreach

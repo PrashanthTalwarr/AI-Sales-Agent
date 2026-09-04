@@ -7,7 +7,8 @@ Runs the full pipeline end-to-end:
   3. SCORE   — Weighted composite lead scoring
   4. QUALIFY — Filter to score >= 75
   5. OUTREACH — Generate personalized messages via Claude API
-  6. EXPORT  — Save results to CSV + JSON
+  6. SEND    — Deliver emails via Resend
+  7. EXPORT  — Save results to data/state.json, CSV + JSON
 
 Usage:
   python scripts/run_pipeline.py              # Full pipeline
@@ -45,12 +46,10 @@ from src.pipeline.ingest import run_full_ingest, RawSignal
 from src.pipeline.enrich import run_enrichment, enrich_with_audit_data, enrich_with_team_data, EnrichedProfile
 from src.pipeline.score import run_scoring
 from src.agents.outreach_agent import run_outreach_generation
-from src.integrations.hubspot import push_batch_to_hubspot
-from src.integrations.slack_alerts import alert_hot_lead, alert_pipeline_complete, alert_outreach_sent
 from src.integrations.contacts import find_contacts_for_qualified_leads
 from src.integrations.email_sender import send_outreach_emails
 from src.monitoring.event_monitor import run_event_monitor
-from src.db.store import ensure_schema, save_leads, save_contacts, save_outreach
+from src.store.json_store import save_leads, save_contacts, save_outreach
 from src.utils.config import load_config
 
 logger = logging.getLogger(__name__)
@@ -516,53 +515,28 @@ def main():
     # ── STEP 6: SEND EMAILS ──────────────────────────────────────────
     logger.info("Step 6: EMAIL SEND")
     send_results = send_outreach_emails(outreach)
-    alert_outreach_sent(send_results)
     sys.stdout.flush()
 
-    # ── STEP 7: POSTGRESQL ───────────────────────────────────────────
-    logger.info("Step 7: POSTGRESQL")
-    ensure_schema()
+    # ── STEP 7: PERSIST TO data/state.json ───────────────────────────
+    logger.info("Step 7: PERSIST (data/state.json)")
     save_leads(scored, enrichment_map)
     save_contacts(contacts_map)
     save_outreach(send_results)
     sys.stdout.flush()
 
-    # ── STEP 8: HUBSPOT ──────────────────────────────────────────────
-    logger.info("Step 8: HUBSPOT")
-    push_batch_to_hubspot(qualified, enrichment_map, persona_map, send_results=send_results)
-    sys.stdout.flush()
-
-    # ── STEP 9: SLACK ALERTS ─────────────────────────────────────────
-    logger.info("Step 9: SLACK ALERTS")
-    hot_leads = [s for s in scored if s.score_tier == "hot"]
-    for lead in hot_leads:
-        persona = persona_map.get(lead.protocol_name, {})
-        alert_hot_lead(lead.protocol_name, lead.composite_score, lead.scoring_rationale, persona)
-        logger.info(f"Slack hot-lead alert sent for {lead.protocol_name} ({lead.composite_score:.0f})")
-    sys.stdout.flush()
-
-    # ── STEP 10: MARKET EVENT MONITOR ────────────────────────────────
-    logger.info("Step 10: MONITOR")
+    # ── STEP 8: MARKET EVENT MONITOR ─────────────────────────────────
+    logger.info("Step 8: MONITOR")
     pipeline_protocol_names = [p.protocol_name for p in profiles]
     events = run_event_monitor(pipeline_protocol_names)
     logger.info(f"Monitor: {len(events)} events detected")
     sys.stdout.flush()
 
-    # ── STEP 11: EXPORT ──────────────────────────────────────────────
-    logger.info("Step 11: EXPORT")
+    # ── STEP 9: EXPORT ───────────────────────────────────────────────
+    logger.info("Step 9: EXPORT")
     print("\n" + "=" * 60, flush=True)
     print("EXPORT — Saving results", flush=True)
     print("=" * 60 + "\n", flush=True)
     export_results(scored, outreach)
-    sys.stdout.flush()
-
-    # ── SLACK: PIPELINE COMPLETE ──────────────────────────────────────
-    alert_pipeline_complete(
-        total_scored=len(scored),
-        hot=hot_count,
-        warm=warm_count,
-        outreach=len(outreach)
-    )
     sys.stdout.flush()
 
     # ── FINAL SUMMARY ────────────────────────────────────────────────

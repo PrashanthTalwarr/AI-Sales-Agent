@@ -11,7 +11,6 @@ When a relevant event is detected, it:
   1. Checks if any pipeline target protocols are affected
   2. Creates a MarketEvent record
   3. Triggers contextual outreach via the outreach agent
-  4. Sends a Slack alert
 
 JD alignment: "monitoring systems that detect market events (exploits, launches, 
 governance proposals, funding rounds) and trigger contextual outreach"
@@ -203,7 +202,7 @@ def run_event_monitor(pipeline_protocols: list[str]) -> list[DetectedEvent]:
     Run all event monitors and return detected events.
     
     In production: runs on AWS Lambda every hour via CloudWatch Events.
-    Step Functions orchestrates: detect → check relevance → trigger outreach → alert Slack.
+    Step Functions orchestrates: detect → check relevance → trigger outreach.
     """
     print("\n" + "=" * 60, flush=True)
     print("MONITOR — Checking for market events", flush=True)

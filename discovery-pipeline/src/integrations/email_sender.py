@@ -14,21 +14,16 @@ logger = logging.getLogger(__name__)
 
 
 def _already_sent(protocol_name: str, persona_name: str) -> bool:
-    """Check PostgreSQL outreach table — returns True if email was already sent."""
+    """Check the on-disk send ledger — True if this person was emailed in a previous run."""
     try:
-        from src.db.store import _get_conn
-        conn = _get_conn()
-        if not conn:
-            return False
-        with conn:
-            with conn.cursor() as cur:
-                cur.execute(
-                    "SELECT 1 FROM outreach WHERE protocol_name=%s AND persona_name=%s LIMIT 1",
-                    (protocol_name, persona_name)
-                )
-                return cur.fetchone() is not None
-    except Exception:
-        return False
+        from src.store.json_store import already_sent
+        return already_sent(protocol_name, persona_name)
+    except Exception as e:
+        # Fail closed: if the ledger can't be read we do not know whether this
+        # person was already emailed, and a duplicate cold email is worse than
+        # a skipped one.
+        logger.error("Send ledger unreadable (%s) — skipping send to be safe", e)
+        return True
 
 
 def _get_resend_client():
@@ -136,6 +131,14 @@ def send_outreach_emails(drafts: list) -> dict:
                 "status": "sent",
                 "id": email_id,
             })
+            # Record immediately — an interrupted run must not re-send on retry
+            try:
+                from src.store.json_store import record_sent
+                record_sent(draft.protocol_name, draft.persona_name, to_email, str(email_id))
+            except Exception as le:
+                logger.error("Failed to write send ledger for %s / %s: %s",
+                             draft.protocol_name, draft.persona_name, le)
+
             dest = f"{to_email} (real: {real_email})" if test_email and real_email else to_email
             print(f"  OK Sent -> {dest} ({draft.protocol_name} / {draft.persona_name})", flush=True)
             logger.info("Email sent: %s → %s | id=%s | subject=%s", draft.protocol_name, to_email, email_id, draft.subject_line)

@@ -20,24 +20,19 @@ Web3 engineering teams are using Copilot, Cursor, and Claude Code to write Solid
 4. **Contact enrichment** — Finds founders, CTOs, and security leads via GitHub contributors + Claude web search
 5. **Outreach** — Generates personalized cold emails via Claude API, one per person found
 6. **Send** — Delivers emails via Resend
-7. **CRM** — Pushes leads and contacts to HubSpot (company + contact per person emailed)
-8. **DB** — Persists everything to PostgreSQL (leads, contacts, outreach history)
+7. **Persist** — Saves leads, contacts, and outreach history to `data/state.json`
 
 ```mermaid
 flowchart TD
     A[DeFiLlama API\nTVL · Categories · Chains] --> B[Enrich\nGitHub · Audit History · Funding]
     B --> C[Score\n100-pt composite model]
     C --> D{Score ≥ 75?}
-    D -- No --> E[PostgreSQL\nStored, not actioned]
+    D -- No --> E[data/state.json\nStored, not actioned]
     D -- Yes --> F[Find Contacts\nGitHub contributors + Claude web search\nproduction: Apollo.io]
     F --> G[Claude API\nGenerate personalized email]
     G --> H[Resend\nDeliver email]
-    H --> I[HubSpot\nCompany + Contact created]
-    H --> J[PostgreSQL\nLeads · Contacts · Outreach history]
-    H --> K[Slack\nPipeline alert]
-    I --> L{Prospect replies?}
-    L -- Yes --> M[HubSpot Deal created\nStatus → CONNECTED]
-    M --> N[Slack reply alert]
+    H --> I[data/sent_ledger.json\nDouble-send guard]
+    H --> J[data/state.json\nLeads · Contacts · Outreach history]
 ```
 
 ---
@@ -53,9 +48,9 @@ discovery-pipeline/
 ├── src/
 │   ├── pipeline/          ingest → enrich → score
 │   ├── agents/            outreach_agent.py (Claude email generation), signal_agent.py
-│   ├── integrations/      hubspot.py, email_sender.py, slack_alerts.py, contacts.py
+│   ├── integrations/      email_sender.py, contacts.py
 │   ├── monitoring/        event_monitor.py (DeFiLlama exploit/funding detection)
-│   ├── db/                store.py (PostgreSQL read/write)
+│   ├── store/             json_store.py (data/state.json + send ledger)
 │   └── utils/             claude_client.py, config.py, json_utils.py, token_tracker.py
 ├── config/
 │   ├── scoring_weights.json   ICP definition — all scoring rules and discovery settings
@@ -73,13 +68,11 @@ discovery-pipeline/
 | Pipeline | Python 3.11+ |
 | Web API | FastAPI + Uvicorn |
 | Frontend | Next.js 14 (App Router) + Tailwind |
-| Database | PostgreSQL + SQLAlchemy |
+| Persistence | Local JSON (`data/state.json`) |
 | AI / LLM | Claude API (Anthropic SDK) |
 | Agents | LangChain ReAct |
-| CRM | HubSpot API |
 | Email | Resend |
 | Monitoring | DeFiLlama hacks/funding APIs |
-| Slack | Webhook (via requests) |
 
 ---
 
@@ -119,55 +112,15 @@ cp config/.env.example config/.env
 
 Required:
 - `ANTHROPIC_API_KEY` — Claude API (outreach generation + contact search)
-- `DATABASE_URL` — PostgreSQL connection string
 
 Optional but recommended:
 - `GITHUB_TOKEN` — raises GitHub rate limit from 60 to 5000 req/hr
-- `HUBSPOT_API_KEY` — push leads/contacts to CRM
 - `RESEND_API_KEY` + `RESEND_FROM_EMAIL` — send outreach emails
-- `SLACK_WEBHOOK_URL` — pipeline completion + hot lead alerts
 - `RESEND_TEST_EMAIL` — redirect all emails to one address during testing
 
 ---
 
-### Getting a HubSpot API Key
-
-1. Log in to [HubSpot](https://app.hubspot.com)
-2. Go to **Settings** (gear icon, top right)
-3. In the left sidebar go to **Integrations → Private Apps**
-4. Click **Create a private app**
-5. Give it a name (e.g. `Discovery Pipeline`)
-6. Go to the **Scopes** tab and add the following:
-   - `crm.objects.companies.read`
-   - `crm.objects.companies.write`
-   - `crm.schemas.companies.write`
-   - `crm.objects.contacts.read`
-   - `crm.objects.contacts.write`
-   - `crm.schemas.contacts.read`
-   - `crm.schemas.contacts.write`
-7. Click **Create app** → **Continue creating**
-8. Copy the token shown — this is your `HUBSPOT_API_KEY`
-
----
-
-### Getting a Slack Webhook URL
-
-1. Go to [api.slack.com/apps](https://api.slack.com/apps) and click **Create New App**
-2. Choose **From scratch** → give it a name (e.g. `Discovery Pipeline`) → select your workspace
-3. In the left sidebar go to **Incoming Webhooks**
-4. Toggle **Activate Incoming Webhooks** to On
-5. Click **Add New Webhook to Workspace**
-6. Select the channel you want alerts posted to → click **Allow**
-7. Copy the webhook URL shown — this is your `SLACK_WEBHOOK_URL`
-
-### 3. Database
-
-```bash
-psql -U postgres -c "CREATE DATABASE discovery_pipeline;"
-# Schema is created automatically on first pipeline run
-```
-
-### 4. Frontend
+### 3. Frontend
 
 ```bash
 cd discovery-pipeline/frontend
@@ -175,7 +128,7 @@ npm install
 npm run dev
 ```
 
-### 5. Backend API
+### 4. Backend API
 
 ```bash
 uvicorn scripts.api:app --port 8000 --reload
@@ -208,10 +161,8 @@ To simulate a prospect replying, use the `POST /api/outreach/replied` endpoint d
 }
 ```
 
-This fires three things automatically:
-1. **PostgreSQL** — outreach status updated to `replied`
-2. **HubSpot** — contact status updated from `ATTEMPTED_TO_CONTACT` → `CONNECTED`, and a Deal is created in the Discovery Pipeline Outreach pipeline
-3. **Slack** — alert fired with the protocol name, persona, and reply content
+This does one thing:
+1. **`data/state.json`** — outreach status updated to `replied`, with the reply body stored alongside the original message
 
 ### Pipeline Results
 
@@ -225,18 +176,6 @@ This fires three things automatically:
 
 ![Email received in inbox via Resend](discovery-pipeline/docs/images/email-sent.png)
 
-### Slack Alert
-
-![Slack notification on pipeline completion](discovery-pipeline/docs/images/slack-alert.png)
-
-### HubSpot CRM
-
-![Company and contact pushed to HubSpot](discovery-pipeline/docs/images/hubspot-crm.png)
-
-### Database
-
-![Leads and outreach records persisted in PostgreSQL](discovery-pipeline/docs/images/database.png)
-
 ---
 
 ## Chat Agent
@@ -249,9 +188,7 @@ The UI includes a LangChain-powered agent (Claude) with tools:
 | `get_outreach_draft` | Show all drafted emails for a protocol |
 | `get_pipeline_summary` | High-level counts and top leads |
 | `get_contacts` | Show contacts found for a protocol |
-| `push_to_hubspot` | Push a lead to HubSpot CRM |
 | `run_market_monitor` | Check DeFiLlama for exploits and funding rounds |
-| `send_slack` | Send a message to the Slack channel |
 
 ---
 
@@ -286,8 +223,7 @@ The UI header shows live token usage and estimated cost for the current session.
 | `scripts/run_pipeline.py` | CLI orchestrator + `RESEARCH_OVERLAYS` seed data |
 | `src/agents/outreach_agent.py` | Claude email generation + fallback templates |
 | `src/integrations/contacts.py` | GitHub + Claude web search for contacts |
-| `src/integrations/hubspot.py` | HubSpot company + contact sync |
-| `src/db/store.py` | PostgreSQL schema + read/write |
+| `src/store/json_store.py` | JSON persistence + send ledger |
 | `config/scoring_weights.json` | ICP definition — edit this to tune targeting |
 | `frontend/src/app/page.tsx` | Main UI — chat, lead table, draft drawer |
 
