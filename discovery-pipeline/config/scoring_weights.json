@@ -1,0 +1,92 @@
+{
+  "model_version": "1.0",
+  "hypothesis": "A",
+  "context": "web3",
+  "description": "Lead scoring weights for Hypothesis A (Web3): AI-generated smart contract security gaps",
+
+  "discovery": {
+    "min_tvl_usd": 50000000,
+    "max_protocols_per_run": 50,
+    "max_qualified_leads": 3,
+    "max_contacts_per_protocol": 3,
+    "github_orgs_per_protocol": 3,
+    "target_categories": ["Dexes", "Lending", "Yield", "Bridge", "Liquid Staking", "RWA", "CDP", "Derivatives", "Restaking", "Chain"],
+    "exclude_categories": ["NFT Marketplace", "Gaming", "Launchpad", "Options Vault"]
+  },
+
+  "weights": {
+    "tvl_and_funds_at_risk": {
+      "max_score": 30,
+      "description": "Higher TVL = bigger blast radius = more urgency for security",
+      "rules": {
+        "tvl_above_1b": 30,
+        "tvl_100m_to_1b": 25,
+        "tvl_10m_to_100m": 20,
+        "tvl_1m_to_10m": 14,
+        "tvl_below_1m_or_prelaunch": 8,
+        "no_data": 0
+      }
+    },
+    "audit_status": {
+      "max_score": 25,
+      "description": "No audit or stale audit = highest need for security services",
+      "rules": {
+        "no_audit_ever": 25,
+        "single_audit_over_6mo_ago": 22,
+        "audited_but_shipping_new_unaudited_code": 20,
+        "single_recent_audit_no_bounty": 16,
+        "multiple_audits_no_continuous_program": 10,
+        "active_bounty_on_competitor_platform": 8,
+        "already_a_client": 0
+      }
+    },
+    "shipping_velocity": {
+      "max_score": 20,
+      "description": "Faster shipping = more unreviewed code = more risk surface",
+      "rules": {
+        "daily_commits_new_contracts_deploying_weekly": 20,
+        "active_development_multiple_repos": 16,
+        "moderate_activity_monthly_deploys": 12,
+        "slow_development_stable_protocol": 6,
+        "no_recent_activity": 0
+      }
+    },
+    "funding_recency": {
+      "max_score": 15,
+      "description": "Recent funding = budget available for security services",
+      "rules": {
+        "raised_in_last_3_months": 15,
+        "raised_in_last_6_months": 12,
+        "raised_in_last_12_months": 9,
+        "raised_over_12_months_ago": 5,
+        "no_funding_data_or_dao": 3
+      }
+    },
+    "reachability": {
+      "max_score": 10,
+      "description": "Can we reach the decision maker within 2 hops?",
+      "rules": {
+        "warm_intro_via_researcher_network": 10,
+        "team_doxxed_active_on_twitter": 8,
+        "team_doxxed_reachable_via_discord_telegram": 6,
+        "team_partially_doxxed": 4,
+        "fully_anonymous_team": 2
+      }
+    }
+  },
+
+  "qualification_filters": {
+    "min_composite_score": 75,
+    "exclude_existing_clients": true,
+    "exclude_dead_protocols": true,
+    "require_active_github_in_last_90_days": true
+  },
+
+  "tier_thresholds": {
+    "hot": 90,
+    "warm": 75,
+    "cool": 0
+  },
+
+  "notes": "Weights calibrated for initial discovery. After 10 calls, recalibrate based on which factors predicted booking + pain confirmation. discovery.target_categories maps to DeFiLlama category field names. max_qualified_leads capped at 3 for demo cost management. In production, remove the cap and let score threshold filter naturally."
+}

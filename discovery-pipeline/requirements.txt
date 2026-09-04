@@ -1,0 +1,26 @@
+# ============================================================================
+# Discovery Pipeline — Python Dependencies
+# ============================================================================
+
+# --- Core Pipeline ---
+requests==2.32.3              # HTTP calls to DeFiLlama, GitHub, etc.
+pydantic==2.7.0               # Data validation for pipeline models
+python-dotenv==1.0.1          # Environment variable management
+
+# --- Web API ---
+fastapi==0.111.0              # REST API framework
+uvicorn==0.30.1               # ASGI server for FastAPI
+
+# --- Database ---
+sqlalchemy==2.0.30            # ORM for PostgreSQL
+psycopg2-binary==2.9.9        # PostgreSQL driver
+
+# --- AI / LLM ---
+anthropic>=0.28.0,<1          # Claude API (Anthropic SDK)
+langchain==0.2.0              # Agent orchestration (ReAct)
+langchain-anthropic==0.1.15   # Claude + LangChain integration
+langchain-core==0.2.0         # LangChain core (tools, prompts, messages)
+
+# --- Integrations ---
+hubspot-api-client==9.0.0     # HubSpot CRM integration
+resend==2.2.0                 # Email delivery
