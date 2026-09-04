@@ -481,6 +481,7 @@ export default function Home() {
   const [testEmailError, setTestEmailError] = useState<string | null>(null);
   const [health, setHealth] = useState<Health | null>(null);
   const [waking, setWaking] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -534,8 +535,17 @@ export default function Home() {
     try {
       const data = await api.getLeads();
       setLeads(data.leads);
-    } catch {
-      // no leads yet
+      setLoadError(null);
+    } catch (e) {
+      // A silent failure here is indistinguishable from "no results yet", which
+      // hides the most common deployment fault: the API is up but its CORS
+      // allowlist does not include this origin, so the browser blocks the call.
+      const msg = e instanceof Error ? e.message : String(e);
+      setLoadError(
+        /failed to fetch|networkerror|load failed/i.test(msg)
+          ? "Could not reach the API. If it is deployed, its CORS_ORIGINS must include this site's URL."
+          : msg
+      );
     }
   }, []);
 
@@ -625,6 +635,10 @@ export default function Home() {
       setIsLoading(false);
     }
   }, [refreshLeads]);
+
+  // The API reports whether live runs are permitted; honour it rather than
+  // letting the click fail as an opaque EventSource connection error.
+  const runsDisabled = !IS_DEMO && health !== null && !health.pipeline_runs_allowed;
 
   const handleRunPipeline = useCallback(() => {
     const recipient = testEmail.trim();
@@ -738,13 +752,30 @@ export default function Home() {
           </div>
           <button
             onClick={handleRunPipeline}
-            disabled={pipelineStatus === "running"}
+            disabled={pipelineStatus === "running" || runsDisabled}
+            title={
+              runsDisabled
+                ? "Live pipeline runs are disabled on this deployment — they spend Claude credits and can send email. The results on screen came from a real run."
+                : "Run the full pipeline"
+            }
             className="px-3 py-1.5 text-xs rounded-lg bg-purple-600 hover:bg-purple-500 text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            {pipelineStatus === "running" ? "Running..." : "Run Pipeline"}
+            {pipelineStatus === "running"
+              ? "Running..."
+              : runsDisabled
+              ? "Run Pipeline (disabled)"
+              : "Run Pipeline"}
           </button>
         </div>
       </header>
+
+      {loadError && !waking && (
+        <div className="shrink-0 px-5 py-2 bg-red-500/10 border-b border-red-500/30 text-xs text-red-200/90">
+          <span className="font-semibold">API unreachable</span>
+          <span className="text-red-200/60"> · </span>
+          <span>{loadError}</span>
+        </div>
+      )}
 
       {waking && (
         <div className="shrink-0 px-5 py-2 bg-blue-500/10 border-b border-blue-500/25 text-xs text-blue-200/90 flex items-center gap-2">
