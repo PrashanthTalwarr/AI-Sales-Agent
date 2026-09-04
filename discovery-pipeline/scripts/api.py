@@ -276,7 +276,11 @@ Be concise. Show full outreach messages when asked. Use tools proactively."""
 
 def _build_executor() -> AgentExecutor:
     api_key = os.getenv("ANTHROPIC_API_KEY", "")
-    llm = ChatAnthropic(model=MODEL, api_key=api_key, temperature=0, streaming=True)
+    # stream_usage makes the streamed response carry usage_metadata. Without it
+    # a streaming chat model reports no token counts at all and the UI's cost
+    # readout sits at zero no matter how much the agent spends.
+    llm = ChatAnthropic(model=MODEL, api_key=api_key, temperature=0,
+                        streaming=True, stream_usage=True)
     prompt = ChatPromptTemplate.from_messages([
         ("system", SYSTEM_PROMPT),
         MessagesPlaceholder("chat_history"),
@@ -447,24 +451,41 @@ async def chat_stream(req: ChatRequest):
                         full_response += token
                         yield f"data: {json.dumps({'type': 'token', 'text': token})}\n\n"
 
-                elif kind == "on_llm_end":
+                # astream_events v2 emits "on_chat_model_end" for chat models;
+                # "on_llm_end" is only fired for plain completion LLMs, so listening
+                # for that alone meant the counter never moved and the UI showed
+                # 0 tokens no matter how much the agent actually spent.
+                elif kind in ("on_chat_model_end", "on_llm_end"):
                     try:
                         output = event["data"].get("output", {})
                         usage = getattr(output, "usage_metadata", None) or {}
+
+                        # Some versions hand back a dict rather than a message object
+                        if not usage and isinstance(output, dict):
+                            usage = output.get("usage_metadata") or {}
+
+                        # Fall back to the generations list, and to response_metadata
+                        # where Anthropic reports input_tokens/output_tokens directly
                         if not usage:
-                            # also check generations list
-                            for gens in getattr(output, "generations", []):
+                            for gens in getattr(output, "generations", []) or []:
                                 for g in gens:
-                                    usage = getattr(getattr(g, "message", None), "usage_metadata", None) or {}
+                                    msg = getattr(g, "message", None)
+                                    usage = getattr(msg, "usage_metadata", None) or {}
+                                    if not usage:
+                                        meta = getattr(msg, "response_metadata", None) or {}
+                                        usage = meta.get("usage") or {}
                                     if usage:
                                         break
                                 if usage:
                                     break
-                        if usage:
-                            inp_t = usage.get("input_tokens", 0)
-                            out_t = usage.get("output_tokens", 0)
+
+                        inp_t = int(usage.get("input_tokens", 0) or 0)
+                        out_t = int(usage.get("output_tokens", 0) or 0)
+                        if inp_t or out_t:
                             token_tracker.record(inp_t, out_t)
-                            logger.debug("chat_stream tokens: in=%d out=%d", inp_t, out_t)
+                            logger.info("chat_stream tokens: in=%d out=%d", inp_t, out_t)
+                        else:
+                            logger.debug("chat_stream: no usage on %s", kind)
                     except Exception as te:
                         logger.debug("chat_stream token parse failed: %s", te)
 
