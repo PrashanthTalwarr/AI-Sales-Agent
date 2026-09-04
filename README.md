@@ -10,6 +10,19 @@ integration to set up: clone it, add two API keys, and run it.
 
 ---
 
+## Live Demo
+
+**[View the demo →](https://your-project.vercel.app)** *(replace with your Vercel URL after deploying)*
+
+The hosted demo is the frontend serving a snapshot of a real pipeline run: 58 scored
+protocols, contacts found via GitHub and Claude web search, and three outreach emails
+Claude actually wrote. No API keys, nothing to spin up, and email sending is disabled.
+
+Deployment details, and why the Python backend is not deployed alongside it, are in
+[DEPLOY.md](DEPLOY.md).
+
+---
+
 ## The Hypothesis
 
 Web3 engineering teams are using Copilot, Cursor, and Claude Code to write Solidity and Rust smart contracts faster than ever. But AI-generated smart contract code is uniquely dangerous — a single vulnerability means **immediate, irreversible loss of funds**. Traditional audit cycles can't keep pace with AI-accelerated shipping. A security platform — combining continuous AI code analysis, a large independent researcher network, competitions, and bug bounties — is built for this velocity.

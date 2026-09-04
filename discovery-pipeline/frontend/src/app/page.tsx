@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useRef, useEffect, useCallback } from "react";
-import { api, Lead, Draft, ToolCall, TokenUsage } from "@/lib/api";
+import { api, IS_DEMO, Lead, Draft, ToolCall, TokenUsage } from "@/lib/api";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -686,7 +686,7 @@ export default function Home() {
           >
             ⚡ {tokenUsage ? tokenUsage.total_tokens.toLocaleString() : "0"} tok · ${tokenUsage ? tokenUsage.estimated_cost_usd.toFixed(4) : "0.0000"}
           </span>
-          <div className="flex flex-col">
+          <div className={`flex flex-col ${IS_DEMO ? "hidden" : ""}`}>
             <div className="flex items-center gap-2">
               <label htmlFor="test-email" className="text-xs text-gray-500 whitespace-nowrap">
                 Send test emails to:
@@ -720,6 +720,25 @@ export default function Home() {
           </button>
         </div>
       </header>
+
+      {IS_DEMO && (
+        <div className="shrink-0 px-5 py-2 bg-amber-500/10 border-b border-amber-500/25 text-xs text-amber-200/90 flex flex-wrap items-center gap-x-2 gap-y-1">
+          <span className="font-semibold">Demo</span>
+          <span className="text-amber-200/60">·</span>
+          <span>
+            Showing a saved run of the real pipeline — 58 protocols scored, contacts found, emails
+            written by Claude. Run Pipeline replays that run; email sending is off.
+          </span>
+          <a
+            href="https://github.com/PrashanthTalwar05/AI-Sales-Agent"
+            target="_blank"
+            rel="noreferrer"
+            className="underline underline-offset-2 hover:text-amber-100"
+          >
+            Run it live →
+          </a>
+        </div>
+      )}
 
       <div className="flex flex-1 overflow-hidden">
         {/* Sidebar — Leads */}

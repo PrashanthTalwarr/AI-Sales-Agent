@@ -1,4 +1,14 @@
-const BASE = "http://localhost:8000";
+/**
+ * Where the API lives.
+ *
+ * Set NEXT_PUBLIC_API_BASE to point at a running FastAPI backend (local dev uses
+ * frontend/.env.local). Leave it unset — as on the hosted demo — and requests go
+ * to this app's own /api routes, which serve a snapshot of a real pipeline run.
+ */
+const BASE = process.env.NEXT_PUBLIC_API_BASE ?? "";
+
+/** True when no backend is configured and the built-in demo routes are serving. */
+export const IS_DEMO = BASE === "";
 
 export interface Contact {
   name: string;
