@@ -811,9 +811,15 @@ async def send_one_draft(req: SendDraftRequest):
                    "or set RESEND_TEST_EMAIL in config/.env.",
         )
     if result["status"] == "resend_unavailable":
+        # Visitors see this, not just developers. Explain it as a deliberate
+        # choice about the hosted demo rather than a missing config line.
         raise HTTPException(
             status_code=503,
-            detail="Resend not configured — set RESEND_API_KEY in config/.env.",
+            detail="Sending is turned off on the hosted demo. Delivering real email needs a "
+                   "verified sending domain and a paid instance to run reliably, and a public "
+                   "button that sends mail is a bad idea anyway. Run it locally with a Resend "
+                   "key and this delivers to your own test inbox — every email redirected to "
+                   "one address, capped per run, and logged so nobody is contacted twice.",
         )
 
     row = result["results"][0] if result["results"] else {}

@@ -295,11 +295,13 @@ function DraftDrawer({
         {draft && (
           <div className="border-t border-discovery-border px-5 py-3 shrink-0 bg-discovery-surface">
             <div className="flex items-center justify-between gap-3">
-              <div className="text-xs text-gray-500 min-w-0">
+              <div className="text-xs text-gray-500 min-w-0 max-w-[380px]">
                 {send.status === "sent" ? (
                   <span className="text-green-400">✓ {send.message}</span>
                 ) : send.status === "error" ? (
-                  <span className="text-red-400 break-words">{send.message}</span>
+                  <span className="text-amber-300/90 break-words leading-relaxed">
+                    {send.message}
+                  </span>
                 ) : (
                   <>
                     Test send goes to{" "}

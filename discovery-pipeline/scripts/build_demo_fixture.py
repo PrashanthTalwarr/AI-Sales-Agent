@@ -18,7 +18,7 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from src.store.json_store import load_state
+from src.store.json_store import SEED_PATH
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 OUT = os.path.join(ROOT, "frontend", "src", "lib", "demo-data.json")
@@ -55,42 +55,23 @@ PIPELINE_LOG = [
     "",
 ]
 
-POST_SCORE_LOG = [
-    "",
-    "✓ Qualified top 3 leads (score >= 75)",
+POST_SCORE_LOG_HEAD = [
     "",
     "============================================================",
     "CONTACT ENRICHMENT — GitHub + Claude web search",
     "============================================================",
     "",
-    "  Rocket Pool: 3 contacts (1 with email)",
-    "  Lido: 3 contacts (0 with email)",
-    "  EigenCloud: 3 contacts (1 with email)",
-    "",
-    "✓ Contact enrichment complete: 3 protocols, 9 total contacts",
-    "",
-    "============================================================",
-    "OUTREACH STAGE — Personalized emails per person",
-    "============================================================",
-    "",
-    "  LLM: Claude API (claude-sonnet-4-6)",
-    "  ✓ Rocket Pool (warm, Claude): 1 emails → Darren Langley",
-    "  ✓ Lido (warm, Claude): 1 emails → Vasiliy Shapovalov",
-    "  ✓ EigenCloud (warm, Claude): 1 emails → Sreeram Kannan",
-    "",
-    "✓ Generated 3 personalized emails across 3 protocols",
+]
+
+POST_SCORE_LOG_TAIL = [
     "",
     "============================================================",
     "EMAIL SEND — Sending via Resend",
     "============================================================",
     "",
-    "  [DEMO MODE] Email sending is disabled on the hosted demo.",
-    "  Locally this delivers to your configured test inbox and records",
-    "  each send in data/sent_ledger.json so no one is emailed twice.",
-    "",
-    "  OK state.json: 58 leads saved",
-    "  OK state.json: 18 contacts saved",
-    "  OK state.json: 3 drafts saved",
+    "  [DEMO] Sending is off on the hosted demo — it needs a verified domain",
+    "  and a paid instance. Locally this delivers to one test inbox, capped",
+    "  per run, and logs every send so nobody is contacted twice.",
     "",
     "============================================================",
     "PIPELINE COMPLETE",
@@ -99,16 +80,21 @@ POST_SCORE_LOG = [
 
 
 def main():
-    state = load_state()
+    # Build from the committed seed, which is exactly what the deployed API
+    # serves. Reading local state.json instead would let the hosted demo and
+    # its offline fallback drift apart.
+    state = json.load(io.open(SEED_PATH, encoding='utf-8'))
+    for k in ('leads', 'contacts', 'outreach', 'drafts'):
+        state.setdefault(k, [] if k != 'contacts' else {})
     leads = sorted(state["leads"], key=lambda l: l["composite_score"], reverse=True)
 
     if not leads:
-        print("data/state.json has no leads — run the pipeline first.")
+        print("data/seed_state.json has no leads — run the pipeline first.")
         return 1
 
     # Score lines, rendered the way run_scoring prints them
     score_lines = []
-    for l in leads[:12]:
+    for l in leads:
         icon = {"hot": "🔥", "warm": "🟡", "cool": "⚪"}.get(l["score_tier"], "?")
         score_lines.append(
             f"  {icon} {l['protocol_name']:20s} | Score: {l['composite_score']:5.1f} "
@@ -116,19 +102,44 @@ def main():
         )
     hot = sum(1 for l in leads if l["score_tier"] == "hot")
     warm = sum(1 for l in leads if l["score_tier"] == "warm")
-    score_lines.append(f"  ... {len(leads) - 12} more")
     score_lines.append("")
     score_lines.append(f"✓ Scored {len(leads)} protocols: {hot} hot, {warm} warm")
+    score_lines.append("")
+    score_lines.append(f"✓ Qualified top {len(leads)} leads (score >= 75)")
 
-    tail = list(POST_SCORE_LOG)
+    # Contact enrichment, straight from the data
+    mid = list(POST_SCORE_LOG_HEAD)
+    total_contacts = 0
+    for name, cs in state["contacts"].items():
+        with_email = sum(1 for c in cs if c.get("email"))
+        total_contacts += len(cs)
+        mid.append(f"  {name}: {len(cs)} contacts ({with_email} with email)")
+    mid.append("")
+    mid.append(f"✓ Contact enrichment complete: {len(state['contacts'])} protocols, "
+               f"{total_contacts} total contacts")
+    mid += [
+        "",
+        "============================================================",
+        "OUTREACH STAGE — Personalized emails per person",
+        "============================================================",
+        "",
+        "  LLM: Claude API (claude-sonnet-4-6)",
+    ]
+    for d in state["drafts"]:
+        mid.append(f"  ✓ {d['protocol_name']} (warm, Claude): 1 email → {d['persona_name']}")
+    mid.append("")
+    mid.append(f"✓ Generated {len(state['drafts'])} personalized emails across "
+               f"{len({d['protocol_name'] for d in state['drafts']})} protocols")
+
+    tail = list(POST_SCORE_LOG_TAIL)
     tail += [
         "",
         f"  Scored: {len(leads)} protocols",
         f"  Hot leads: {hot}",
         f"  Warm leads: {warm}",
-        "  Outreach drafted: 3",
+        f"  Outreach drafted: {len(state['drafts'])}",
         "",
-        "  Top 3 targets:",
+        f"  Top {min(3, len(leads))} targets:",
     ]
     for l in leads[:3]:
         tail.append(f"    -> {l['protocol_name']}: {l['composite_score']:.0f} ({l['score_tier']})")
@@ -139,7 +150,7 @@ def main():
         "contacts": state["contacts"],
         "drafts": state["drafts"],
         "outreach": state["outreach"],
-        "pipeline_log": PIPELINE_LOG + score_lines + tail,
+        "pipeline_log": PIPELINE_LOG + score_lines + mid + tail,
         # Representative of the real run that produced this data
         "token_usage": {
             "input_tokens": 119405,
