@@ -13,12 +13,10 @@ discovery-pipeline/
 ├── scripts/
 │   ├── api.py            FastAPI app: REST + SSE endpoints, LangChain chat agent, _do_pipeline_run()
 │   ├── run_pipeline.py   CLI orchestrator + RESEARCH_OVERLAYS / SEED_FUNDING seed data
-│   └── agent.py          [DEAD] CLI-only duplicate of the api.py chat agent
 ├── src/
 │   ├── pipeline/         ingest.py → enrich.py → score.py
 │   ├── agents/
-│   │   ├── outreach_agent.py   Claude email generation + template fallback
-│   │   └── signal_agent.py     [DEAD] not imported anywhere
+│   │   └── outreach_agent.py   Claude email generation + template fallback
 │   ├── integrations/     contacts.py, email_sender.py
 │   ├── monitoring/       event_monitor.py (DeFiLlama exploit/funding detection)
 │   ├── store/json_store.py   JSON persistence (data/state.json) + send ledger
@@ -36,7 +34,8 @@ discovery-pipeline/
    DeFiLlama `/raises` and `/hacks`, matched only to protocols already discovered.
 2. **Enrich** (`enrich.py`) — groups signals per protocol into one `EnrichedProfile`.
    Audit/team data is layered on from `RESEARCH_OVERLAYS`, not scraped.
-3. **Score** (`score.py`) — 5 factors → 0-100 composite → hot/warm/cool tier.
+3. **Score** (`score.py`) — 5 factors → 0-100 composite → hot/warm/cool tier. Every point
+   value, the AI-tool-signal bonus, and the tier thresholds come from the JSON config.
 4. **Qualify** — top `max_qualified_leads` (default 3) with tier hot|warm.
 5. **Contacts** (`integrations/contacts.py`) — GitHub active contributors + Claude
    `web_search` for leadership; merged, deduped by name, sorted by role priority.
@@ -105,6 +104,8 @@ Every integration degrades to a no-op when its key is missing — keep that prop
 - **Dataclasses** for pipeline records (`RawSignal`, `EnrichedProfile`, `ScoredLead`,
   `OutreachDraft`, `Contact`). Plain dicts for enrichment/persona maps.
 - **Config over constants**: pipeline knobs belong in `config/scoring_weights.json`.
+  `score.py` hardcodes no point values — every one is looked up by key, and a missing key
+  logs a warning and scores 0 rather than being silently absorbed. Keep it that way.
 - **Fallbacks over failures**: Claude unavailable → template outreach; DB absent → skip and log.
 - Frontend uses a `discovery.*` Tailwind color namespace and `@/lib/api.ts` as the single
   typed client for every backend call.
@@ -113,8 +114,6 @@ Every integration degrades to a no-op when its key is missing — keep that prop
 
 ## Known weak spots (context for future work)
 
-- **Config is decorative.** `score.py` reads only `tier_thresholds` and `model_version`; every
-  weight in `scoring_weights.json` is re-hardcoded in Python, and the two have already drifted.
 - **No output validation on LLM results.** Claude's outreach text is parsed by string-splitting
   on `Subject:` / `Signals used:`; web-search contacts are `json.loads`'d with no schema check and
   no corroboration before a real email is sent.
@@ -123,11 +122,8 @@ Every integration degrades to a no-op when its key is missing — keep that prop
 - **No tests, no evals.** Nothing verifies scoring, tool selection, or outreach quality.
 - **Shared mutable globals.** `_state` and `_chat_history` in `api.py` are unguarded, and
   `/api/pipeline/run` swaps `sys.stdout` process-wide from a worker thread.
-- **Dead code**: `src/agents/signal_agent.py`, `scripts/agent.py` — the latter still imports
-  the removed HubSpot/Slack modules and no longer runs. Both are slated for deletion.
 - **Stale Anthropic surface**: default model `claude-sonnet-4-20250514`; `token_tracker` hardcodes
   $3/$15 per MTok; `contacts.py` uses the `web_search_20250305` tool variant.
-- **Committed artifact**: `app.log` is tracked in git.
 
 ---
 

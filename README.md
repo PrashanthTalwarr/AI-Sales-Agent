@@ -1,6 +1,12 @@
-#  Discovery Pipeline
+# Discovery Pipeline
 
-AI-powered GTM system for Web3 security sales. Discovers, scores, and reaches out to Web3 protocols most likely to need Web3 security services — security competitions, continuous AI code monitoring, and managed bug bounties. Can be extended to Web2 security as well.
+An AI-powered GTM pipeline for Web3 security sales. It discovers protocols from live
+data, scores them against a configurable ICP, finds the people worth contacting, writes a
+personalized cold email for each with Claude, and sends it — with two hard safety gates in
+front of every send.
+
+Everything persists to a local JSON file. There is no database, no CRM, and no Slack
+integration to set up: clone it, add two API keys, and run it.
 
 ---
 
@@ -24,15 +30,19 @@ Web3 engineering teams are using Copilot, Cursor, and Claude Code to write Solid
 
 ```mermaid
 flowchart TD
-    A[DeFiLlama API\nTVL · Categories · Chains] --> B[Enrich\nGitHub · Audit History · Funding]
-    B --> C[Score\n100-pt composite model]
-    C --> D{Score ≥ 75?}
-    D -- No --> E[data/state.json\nStored, not actioned]
-    D -- Yes --> F[Find Contacts\nGitHub contributors + Claude web search\nproduction: Apollo.io]
-    F --> G[Claude API\nGenerate personalized email]
-    G --> H[Resend\nDeliver email]
-    H --> I[data/sent_ledger.json\nDouble-send guard]
-    H --> J[data/state.json\nLeads · Contacts · Outreach history]
+    A["DeFiLlama API<br/>TVL · Categories · Chains"] --> B["Enrich<br/>GitHub · Audit History · Funding"]
+    B --> C["Score<br/>100-pt composite model"]
+    C --> D{"Score >= 75?"}
+    D -- No --> E["data/state.json<br/>Stored, not actioned"]
+    D -- Yes --> F["Find Contacts<br/>GitHub contributors + Claude web search<br/>production: Apollo.io"]
+    F --> G["Claude API<br/>Generate personalized email"]
+    G --> H{"Test recipient set?"}
+    H -- No --> N["Nothing sent<br/>fail closed"]
+    H -- Yes --> K{"Under MAX_EMAILS?"}
+    K -- No --> P["Held back<br/>not marked as sent"]
+    K -- Yes --> R["Resend<br/>delivered to test inbox"]
+    R --> I["data/sent_ledger.json<br/>Double-send guard"]
+    R --> J["data/state.json<br/>Leads · Contacts · Outreach history"]
 ```
 
 ---
@@ -47,7 +57,7 @@ discovery-pipeline/
 │   └── run_pipeline.py    Standalone CLI pipeline runner
 ├── src/
 │   ├── pipeline/          ingest → enrich → score
-│   ├── agents/            outreach_agent.py (Claude email generation), signal_agent.py
+│   ├── agents/            outreach_agent.py (Claude email generation + templates)
 │   ├── integrations/      email_sender.py, contacts.py
 │   ├── monitoring/        event_monitor.py (DeFiLlama exploit/funding detection)
 │   ├── store/             json_store.py (data/state.json + send ledger)
@@ -55,6 +65,7 @@ discovery-pipeline/
 ├── config/
 │   ├── scoring_weights.json   ICP definition — all scoring rules and discovery settings
 │   └── .env.example           API keys and secrets template
+├── data/                  state.json + sent_ledger.json (gitignored, created on first run)
 └── docs/
     └── images/               Screenshots of the working system
 ```
@@ -68,11 +79,11 @@ discovery-pipeline/
 | Pipeline | Python 3.11+ |
 | Web API | FastAPI + Uvicorn |
 | Frontend | Next.js 14 (App Router) + Tailwind |
-| Persistence | Local JSON (`data/state.json`) |
 | AI / LLM | Claude API (Anthropic SDK) |
-| Agents | LangChain ReAct |
+| Agents | LangChain tool-calling agent |
 | Email | Resend |
 | Monitoring | DeFiLlama hacks/funding APIs |
+| Persistence | `data/state.json` (atomic writes, no DB) |
 
 ---
 
@@ -84,13 +95,19 @@ discovery-pipeline/
 |--------|---------|-------|
 | TVL / funds at risk | 30 | >$1B = 30, $100M–$1B = 25, $10M–$100M = 20 |
 | Audit status | 25 | Never audited = 25, stale = 22, shipping unaudited code = 20 |
-| Shipping velocity | 20 | Daily commits + weekly deploys = 20 |
+| Shipping velocity | 20 | Daily commits + weekly deploys = 16, plus up to 4 for AI tool signals |
 | Funding recency | 15 | Raised in last 3 months = 15 |
 | Reachability | 10 | Warm intro = 10, doxxed + active Twitter = 8 |
 
 **Tiers:** Hot ≥ 90 · Warm 75–89 · Cool < 75
 
-All thresholds and weights live in `config/scoring_weights.json` — no code changes needed to tune the ICP.
+Every point value lives in `config/scoring_weights.json`. `score.py` reads all of them by key
+and hardcodes nothing, so editing that file genuinely changes scoring — drop
+`tvl_100m_to_1b` to 5 and every mid-cap protocol falls a tier, with no code change.
+
+The **AI tool signal bonus** (`+2` per detected `.cursorrules` / Copilot config, max `+4`) is
+the one that encodes the hypothesis: between two protocols shipping at the same rate, the one
+visibly using AI to write contracts scores higher.
 
 ---
 
@@ -110,13 +127,18 @@ cp config/.env.example config/.env
 # Fill in your keys
 ```
 
-Required:
-- `ANTHROPIC_API_KEY` — Claude API (outreach generation + contact search)
+Five keys, and only two are needed to see the pipeline run end to end:
 
-Optional but recommended:
-- `GITHUB_TOKEN` — raises GitHub rate limit from 60 to 5000 req/hr
-- `RESEND_API_KEY` + `RESEND_FROM_EMAIL` — send outreach emails
-- `RESEND_TEST_EMAIL` — redirect all emails to one address during testing
+| Key | Needed for |
+|-----|-----------|
+| `ANTHROPIC_API_KEY` | **Required.** Outreach generation and contact search |
+| `RESEND_API_KEY` | Sending email. Without it the pipeline still scores, finds contacts, and drafts |
+| `RESEND_FROM_EMAIL` | Sender address on a Resend-verified domain |
+| `RESEND_TEST_EMAIL` | The inbox every email is redirected to. **No value here and none in the UI means nothing is sent** |
+| `GITHUB_TOKEN` | Optional. Raises the GitHub rate limit from 60 to 5000 req/hr |
+
+No database URL, no CRM token, no webhook. `DEFILLAMA_BASE_URL`, `ANTHROPIC_MODEL`, and
+`MAX_EMAILS` are also read from the environment if set, but all three have working defaults.
 
 ---
 
@@ -188,9 +210,16 @@ something you will hit day to day. Raise `max_qualified_leads` to make it bite.
 
 ## Running the Pipeline
 
-Open `http://localhost:3000` — click **Run Pipeline** in the UI or chat with the agent.
+Open `http://localhost:3000`, put your own address in the **Send test emails to:** field, and
+click **Run Pipeline**. Progress streams into a modal as it runs.
 
-The pipeline runs fully from the UI. No CLI needed.
+A run scores up to 50 protocols, qualifies the top 3, finds contacts for those, and sends at
+most 5 emails — all to your test inbox. The CLI does the same thing:
+
+```bash
+python scripts/run_pipeline.py --test-email you@example.com
+python scripts/run_pipeline.py --seed-only --no-llm    # no API calls at all
+```
 
 | URL | What it is |
 |-----|-----------|
@@ -247,13 +276,17 @@ All ICP and scoring settings are in `config/scoring_weights.json`:
 ```json
 "discovery": {
   "min_tvl_usd": 50000000,
+  "max_protocols_per_run": 50,
   "max_qualified_leads": 3,
   "max_contacts_per_protocol": 3,
-  "target_categories": ["Dexes", "Lending", "Yield", ...]
+  "max_emails_per_run": 5,
+  "target_categories": ["Dexes", "Lending", "Yield", "..."]
 }
 ```
 
-`max_qualified_leads` is capped at 3 for demo cost management. In production, raise this or remove the cap and let the score threshold filter naturally.
+`max_qualified_leads` is held at 3 to keep Claude costs down during a demo — raise it and let
+the score threshold do the filtering. `max_emails_per_run` is independent of it: it is the
+hard ceiling at the send step, so raising lead volume can never quietly raise email volume.
 
 ---
 
@@ -271,6 +304,8 @@ The UI header shows live token usage and estimated cost for the current session.
 | `scripts/run_pipeline.py` | CLI orchestrator + `RESEARCH_OVERLAYS` seed data |
 | `src/agents/outreach_agent.py` | Claude email generation + fallback templates |
 | `src/integrations/contacts.py` | GitHub + Claude web search for contacts |
+| `src/integrations/email_sender.py` | Resend delivery + both safety gates |
+| `src/pipeline/score.py` | Config-driven scoring, no hardcoded weights |
 | `src/store/json_store.py` | JSON persistence + send ledger |
 | `config/scoring_weights.json` | ICP definition — edit this to tune targeting |
 | `frontend/src/app/page.tsx` | Main UI — chat, lead table, draft drawer |
@@ -293,4 +328,18 @@ If we book 10 discovery calls:
 
 ---
 
+## What I'd Build Next
 
+- **Contact verification before send.** Contacts found via Claude web search are not
+  corroborated against a second source today. A verification gate (MX lookup + a real GitHub
+  or domain match) would stop an unverifiable person from ever being emailed.
+- **An eval harness.** Labelled protocols with expected tiers, an LLM-judge rubric for
+  outreach quality, and tool-call assertions for the chat agent — so a prompt change can be
+  measured instead of eyeballed.
+- **Retries and backoff.** Every outbound HTTP call is a single attempt today, and GitHub
+  rate-limit headers are ignored.
+- **Run tracing.** Per-step timings, token counts, and inputs/outputs surfaced as a timeline,
+  so a run can be debugged after the fact rather than from stdout.
+- **Scale past 3 leads.** The caps exist for demo cost control, not because anything breaks.
+
+---

@@ -28,6 +28,10 @@ frontend/out/
 .next/
 out/
 
+# Logs (regenerated every run)
+app.log
+*.log
+
 # IDE
 .vscode/
 .idea/
