@@ -25,4 +25,4 @@ def get_anthropic_client():
 
 
 def get_anthropic_model() -> str:
-    return os.getenv("ANTHROPIC_MODEL", "claude-sonnet-4-20250514")
+    return os.getenv("ANTHROPIC_MODEL", "claude-sonnet-4-6")

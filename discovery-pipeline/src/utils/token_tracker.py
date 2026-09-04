@@ -1,7 +1,7 @@
 """
 TOKEN TRACKER — Accumulates Claude API token usage across all pipeline calls.
 
-Pricing (claude-sonnet-4-20250514):
+Pricing (claude-sonnet-4-6):
   Input:  $3.00 / 1M tokens
   Output: $15.00 / 1M tokens
 """

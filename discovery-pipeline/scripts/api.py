@@ -241,7 +241,7 @@ AGENT_TOOLS = [
 
 # ── LangChain agent setup ─────────────────────────────────────────────────────
 
-MODEL = os.getenv("ANTHROPIC_MODEL", "claude-sonnet-4-20250514")
+MODEL = os.getenv("ANTHROPIC_MODEL", "claude-sonnet-4-6")
 SYSTEM_PROMPT = """You are the Discovery Pipeline Agent — GTM AI assistant for Web3 security sales.
 We sell smart contract security: reviews, competitions, bug bounties, and monitoring.
 Be concise. Show full outreach messages when asked. Use tools proactively."""
