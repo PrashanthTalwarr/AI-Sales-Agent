@@ -793,8 +793,8 @@ export default function Home() {
           <span className="text-amber-200/60"> · </span>
           <span>
             Serving {health.leads} protocols from a real run. Live pipeline runs are disabled
-            here — they cost Claude credits and can send email — so Run Pipeline is off. The
-            chat agent below is the real thing.
+            here — they cost Claude credits — so Run Pipeline is off. The chat agent below is
+            the real thing: live Claude, real tool calls.
           </span>
         </div>
       )}

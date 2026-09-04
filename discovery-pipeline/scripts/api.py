@@ -316,6 +316,13 @@ CORS_ORIGINS = _origins or ["http://localhost:3000"]
 ALLOW_PIPELINE_RUN = os.getenv("ALLOW_PIPELINE_RUN", "true").strip().lower() in ("1", "true", "yes")
 API_SECRET = os.getenv("API_SECRET", "").strip()
 
+# A run costs roughly $0.40 in Claude calls and takes several minutes. On a public
+# URL that is a button anyone can hold down, so runs are serialised and rate
+# limited. Set PIPELINE_COOLDOWN_SECONDS=0 to disable the cooldown locally.
+PIPELINE_COOLDOWN = int(os.getenv("PIPELINE_COOLDOWN_SECONDS", "900"))
+_run_lock = threading.Lock()
+_run_state = {"in_progress": False, "last_finished": 0.0}
+
 logger.info("CORS origins: %s", CORS_ORIGINS)
 logger.info("Pipeline runs allowed: %s | shared secret required: %s",
             ALLOW_PIPELINE_RUN, bool(API_SECRET))
@@ -392,6 +399,9 @@ async def health():
         "drafts": len(state["drafts"]),
         "last_run": state["last_run"],
         "pipeline_runs_allowed": ALLOW_PIPELINE_RUN,
+        "pipeline_run_in_progress": _run_state["in_progress"],
+        "pipeline_cooldown_seconds": PIPELINE_COOLDOWN,
+        "github_configured": bool(os.getenv("GITHUB_TOKEN", "").strip()),
         "secret_required": bool(API_SECRET),
         "claude_configured": bool(os.getenv("ANTHROPIC_API_KEY", "").strip()),
         "email_configured": bool(os.getenv("RESEND_API_KEY", "").strip()),
@@ -635,6 +645,24 @@ async def pipeline_run(test_email: str = "", secret: str = ""):
         )
     _check_secret(secret)
 
+    # Serialise runs and enforce a cooldown before doing any work
+    import time as _time
+    with _run_lock:
+        if _run_state["in_progress"]:
+            raise HTTPException(
+                status_code=429,
+                detail="A pipeline run is already in progress. Wait for it to finish.",
+            )
+        waited = _time.time() - _run_state["last_finished"]
+        if _run_state["last_finished"] and waited < PIPELINE_COOLDOWN:
+            mins = int((PIPELINE_COOLDOWN - waited) // 60) + 1
+            raise HTTPException(
+                status_code=429,
+                detail=f"A run just completed. Live runs are rate limited to protect API "
+                       f"credits — try again in about {mins} minute{'s' if mins != 1 else ''}.",
+            )
+        _run_state["in_progress"] = True
+
     logger.info("GET /api/pipeline/run — starting pipeline via SSE stream (test_email=%s)",
                 test_email or "<falling back to RESEND_TEST_EMAIL>")
     output_queue: q_module.Queue = q_module.Queue()
@@ -658,6 +686,10 @@ async def pipeline_run(test_email: str = "", secret: str = ""):
             output_queue.put(f"ERROR: {e}")
         finally:
             sys.stdout = old_stdout
+            import time as _t
+            with _run_lock:
+                _run_state["in_progress"] = False
+                _run_state["last_finished"] = _t.time()
             output_queue.put(None)  # sentinel
 
     threading.Thread(target=_run, daemon=True).start()
